@@ -5,7 +5,7 @@ using System.Text;
 
 namespace UnityNetworkingLibrary
 {
-    //louis-e/UDPSocket.cs
+    //Adapted from louis-e/UDPSocket.cs
     //https://gist.github.com/louis-e/888d5031190408775ad130dde353e0fd
 
     public class UDPSocket

@@ -4,4 +4,8 @@
     <TargetFramework>netstandard2.0</TargetFramework>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Crc32C.NET" Version="1.0.5" />
+  </ItemGroup>
+
 </Project>
