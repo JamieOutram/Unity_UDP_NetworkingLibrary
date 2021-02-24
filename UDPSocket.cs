@@ -30,18 +30,36 @@ namespace UnityNetworkingLibrary
             public byte[] buffer = new byte[bufSize];
         }
 
-
-        public void Server(string address, int port)
+        //Attempts to bind socket to provided port and target IP
+        public bool Server(string address, int port)
         {
-            _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.ReuseAddress, true);
-            _socket.Bind(new IPEndPoint(IPAddress.Parse(address), port));
-            Receive();
+            try
+            {
+                _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.ReuseAddress, true);
+                _socket.Bind(new IPEndPoint(IPAddress.Parse(address), port));
+                Receive();
+                return true;
+            }
+            catch (SocketException)
+            {
+                
+                return false;
+            }
         }
 
-        public void Client(string address, int port)
+        public bool Client(string address, int port)
         {
-            _socket.Connect(IPAddress.Parse(address), port);
-            Receive();
+            try
+            {
+                _socket.Connect(IPAddress.Parse(address), port);
+                Receive();
+                return true;
+            }
+            catch (SocketException)
+            {
+
+                return false;
+            }
         }
 
         public void Send(string text)
@@ -67,7 +85,7 @@ namespace UnityNetworkingLibrary
                     Console.WriteLine("RECV: {0}: {1}, {2}", epFrom.ToString(), bytes, Encoding.ASCII.GetString(so.buffer, 0, bytes));
                     OnReceived?.Invoke(state.buffer, bytes); //This event call could possibly be optimised by letting delaying till after processing of sent data 
                 }
-                catch { }
+                catch { }//TODO: This should only catch expected errors
             }, state);
         }
     }
