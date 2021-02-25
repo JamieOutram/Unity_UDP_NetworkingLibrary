@@ -12,7 +12,7 @@ namespace UnityNetworkingLibrary
     {
         private Socket _socket;
         public Socket Socket { get { return _socket; } }
-        private const int bufSize = 8 * 1024;
+        private const int bufSize = PacketManager._maxPacketSizeBits;
         private State state = new State();
         private EndPoint epFrom = new IPEndPoint(IPAddress.Any, 0);
         private AsyncCallback recv = null;
