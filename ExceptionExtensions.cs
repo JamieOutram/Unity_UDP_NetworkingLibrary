@@ -18,6 +18,12 @@ namespace UnityNetworkingLibrary
             }
         }
 
+        class PacketChecksumException : Exception
+        {
+            public PacketChecksumException() { }
+
+        }
+
 
     }
 }

@@ -8,8 +8,7 @@ namespace UnityNetworkingLibrary
     {
         internal const int _maxPacketSizeBytes = 1024;
         internal const int _maxPacketSizeBits = 8 * _maxPacketSizeBytes;
-        internal const byte _ackedBytesLength = 4;
-        internal const byte _ackedBitsLength = 8 * _ackedBytesLength;
+
         UInt16 currentPacketID = 0;
         //TODO: Some sort of queue and priority system for sending and receiving packets. Note probably handled at a higher level than this though
 
@@ -24,10 +23,10 @@ namespace UnityNetworkingLibrary
 
         static RNGCryptoServiceProvider random = new RNGCryptoServiceProvider(); //Secure random function
 
-        static int saltLengthLimit = 32;
+        
         static byte[] GetSalt()
         {
-            return GetSalt(saltLengthLimit);
+            return GetSalt(Packet.saltLengthBits);
         }
         static byte[] GetSalt(int maximumSaltLength)
         {
