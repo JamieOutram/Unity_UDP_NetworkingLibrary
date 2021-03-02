@@ -18,6 +18,7 @@ namespace UnityNetworkingLibrary
     //Server will not bother to send ack back when packet is received immediatly unless flagged as reliable data and decoded without error.
     //Reliable acks could just be empty data packets.
 
+    //TODO: Accessor for data section of packet
     //Future TODO: add some structure to data to allow minor transmission error corrections
     class Packet
     {
