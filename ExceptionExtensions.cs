@@ -24,6 +24,20 @@ namespace UnityNetworkingLibrary
 
         }
 
+        class QueueFullException : Exception
+        {
+            public QueueFullException() { }
+        }
+
+        class QueueEmptyException : Exception
+        {
+            public QueueEmptyException() { }
+        }
+
+        class PacketNotFoundException : Exception
+        {
+            public PacketNotFoundException() { }
+        }
 
     }
 }

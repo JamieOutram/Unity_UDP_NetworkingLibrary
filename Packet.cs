@@ -48,7 +48,7 @@ namespace UnityNetworkingLibrary
             {
                 _id = BitConverter.GetBytes(value);
                 //Sync full packet byte array
-                if (packetData!=null)
+                if (packetData != null)
                     Buffer.BlockCopy(_id, 0, packetData, checksumBytes, idBytes);
             }
         }
@@ -67,10 +67,27 @@ namespace UnityNetworkingLibrary
                     _ackedBytes = new byte[ackedBytesLength];
                 value.CopyTo(_ackedBytes, 0);
                 //Sync full packet byte array
-                if (packetData != null) 
-                    Buffer.BlockCopy(_ackedBytes, 0, packetData, checksumBytes+idBytes, ackedBytesLength);
+                if (packetData != null)
+                    Buffer.BlockCopy(_ackedBytes, 0, packetData, checksumBytes + idBytes, ackedBytesLength);
             }
         } //BitArray Wrapper for _ackedBytes
+
+        byte[] _packetType;
+        public PacketType Type
+        {
+            get
+            {
+                return (PacketType)_packetType[0];
+            }
+            set
+            {
+                if (_packetType == null) _packetType = new byte[packetTypeBytes];
+                _packetType[0] = (byte)value;
+                //Update packet data
+                if (packetData != null)
+                    Buffer.BlockCopy(_packetType, 0, packetData, checksumBytes + idBytes + ackedBytesLength, packetTypeBytes);
+            }
+        }
 
         byte[] packetData; //Full serialized packet data
         public byte[] PacketData { get { return packetData; } }

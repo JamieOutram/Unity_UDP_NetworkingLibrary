@@ -8,24 +8,44 @@ namespace UnityNetworkingLibrary
     
     
     //Mangages ordering and priority of packets to send
-    class PacketManager
+    //Options: unreliable, reliable and blocking data in packets
+    //  unreliable packets are completely unreliable data, sent in one burst and forgotten
+    //  reliable packets contain at least one reliable message, receive ack before forgotten. resent if no ack recieved.
+    //      -various tiers for this which vary burst size and timeout. (larger bursts and timeouts for time critical flags)
+    //  blocking packets behave like TCP, only communicating that packet till received ack (for things like end of game)
+    class PacketManager //TODO: decide split into client and server variants/one packet manager per connection;
     {
         internal const int _maxPacketSizeBytes = 1024;
         internal const int _maxPacketSizeBits = 8 * _maxPacketSizeBytes;
-        
-
+        internal const int _messageQueueSize = 200;
+        internal const int _packetQueueSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
+        internal const int _awaitingAckBufferSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
+        internal const int _receiveBufferSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
+        //Define constants 
+        //TODO: burst length and interval/timeout could be made dynamic based on connection or completely user defined
         const int _unreliableBurstLength = 3; //Number of packets data is included in when sent
         const int _reliableBurstLength = 3; // " for reliable data
         const int _reliableTriggerBurstLength = 10; // " for reliable trigger data
-        TimeSpan _reliableInterval = TimeSpan.FromMilliseconds(100); //timeout after reliable burst before assuming not received in ms NOTE: hopefully rarely triggered thanks to ackedbits
+        TimeSpan _reliableInterval = TimeSpan.FromMilliseconds(100); //timeout after reliable burst before assuming not received in ms NOTE: should be rarely triggered thanks to ackedbits
         BitArray ackedBits = new BitArray(Packet.ackedBitsLength); //Acknowledgement bits for the last ackedBitsLength received packet ids
         UInt16 lastPacketIdReceived = 0; //value set to id of latest receieved packet
         UInt16 currentPacketID = 0; //value incremented and assigned to each packet in the send queue
-        Message[] messageQueue; //Messages to be sent are added to this queue acording to priority.
-        Packet[] packetQueue; //prepared packets waiting to be sent, fairly short queue which allows pushing of unacknowledged packets to front 
-        Packet[] awaitingAckBuffer; //buffer storing reliable messages awaiting acknowledgement.
-        Packet[] receiveBuffer; //When reliable packet id skipped, any more received packets are added to this buffer while waiting for resend.
+        IndexableQueue<Message> messageQueue; //Messages to be sent are added to this queue acording to priority.
+        IndexableQueue<Packet> packetQueue; //prepared packets waiting to be sent, fairly short queue which allows pushing of unacknowledged packets to front 
+        PacketBuffer awaitingAckBuffer; //buffer storing reliable messages awaiting acknowledgement.
+        PacketBuffer receiveBuffer; //When reliable packet id skipped, any more received packets are added to this buffer while waiting for resend.
 
+        UDPSocket socket;
+
+        PacketManager(UDPSocket sock)
+        {
+            //define arrays
+            messageQueue = new IndexableQueue<Message>(_messageQueueSize);
+            packetQueue = new IndexableQueue<Packet>(_packetQueueSize);
+            awaitingAckBuffer = new PacketBuffer(_awaitingAckBufferSize);
+            receiveBuffer = new PacketBuffer(_receiveBufferSize);
+            socket = sock;
+        }
 
         public struct Message
         {
@@ -49,6 +69,28 @@ namespace UnityNetworkingLibrary
             }
         }
 
+        //Returns the next packet to be sent and moves to awaiting ack buffer if reliable
+        public Packet PopNextPacket() 
+        {
+            try
+            {
+                Packet packet = packetQueue.PopFront();
+                if (PacketType.dataReliable == packet.Type)
+                {
+                    awaitingAckBuffer.AddPacket(packet);
+                }
+                return packet;
+            }
+            catch (ExceptionExtensions.QueueEmptyException)
+            {
+                //If the queue is empty return null
+                return null;
+            }
+        }
+
+        
+        
+        //
 
         //Sending unreliable data
         //Send off with x packets and forget about it
@@ -80,11 +122,6 @@ namespace UnityNetworkingLibrary
         //          -any unreliable data can be easily filtered out (flag stored locally) before the packet is resent.
         //          -easily check for duplicate data from packet id 
         //Prefer option 2, combined with a Selectve repeat Protocol
-
-        //Sends data packet and awaits sending confirmation if not received, sends again, repeats until standard timeout.
-        private static void SendReliable(PacketType type, byte[] data)
-        {
-        }
 
 
 
