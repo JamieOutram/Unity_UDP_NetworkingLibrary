@@ -1,12 +1,10 @@
 ﻿using System;
 using System.Collections;
-using System.Collections.Generic;
 using System.Security.Cryptography;
-using System.Timers;
 namespace UnityNetworkingLibrary
 {
-    
-    
+
+
     //Mangages ordering and priority of packets to send
     //Options: unreliable, reliable and blocking data in packets
     //  unreliable packets are completely unreliable data, sent in one burst and forgotten
@@ -21,6 +19,8 @@ namespace UnityNetworkingLibrary
         internal const int _packetQueueSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
         internal const int _awaitingAckBufferSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
         internal const int _receiveBufferSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
+
+
         //Define constants 
         //TODO: burst length and interval/timeout could be made dynamic based on connection or completely user defined
         const int _unreliableBurstLength = 3; //Number of packets data is included in when sent
@@ -35,6 +35,8 @@ namespace UnityNetworkingLibrary
         PacketBuffer awaitingAckBuffer; //buffer storing reliable messages awaiting acknowledgement.
         PacketBuffer receiveBuffer; //When reliable packet id skipped, any more received packets are added to this buffer while waiting for resend.
 
+        byte[] salt;
+
         UDPSocket socket;
 
         PacketManager(UDPSocket sock)
@@ -47,8 +49,11 @@ namespace UnityNetworkingLibrary
             socket = sock;
         }
 
-        public struct Message
+        public struct Message //TODO: This should be an abstract base class for data types that know how to serialize themselves. (common read, write and measure methods) 
         {
+            const int _messageLengthBytes = 2;
+            const int _messageHeaderBytes = _messageLengthBytes;
+            
             public enum MessageType
             {
                 unreliable,
@@ -65,7 +70,10 @@ namespace UnityNetworkingLibrary
             {
                 this.Type = type;
                 this.Priority = priority;
-                this.Data = data;
+                this.Data = new byte[_messageHeaderBytes + data.Length];
+                //Add message length prefix so messages can be recovered from packet easily;
+                Buffer.BlockCopy(BitConverter.GetBytes((ushort)data.Length), 0, this.Data, 0, _messageLengthBytes);
+                Buffer.BlockCopy(data, 0, this.Data, _messageHeaderBytes, data.Length);
             }
         }
 
@@ -88,8 +96,57 @@ namespace UnityNetworkingLibrary
             }
         }
 
+        public void QueueMessage(Message m)
+        {
+            for(int i = messageQueue.Length-1; i >= 0; i--)
+            {
+                if(messageQueue.GetAt(i).Priority >= m.Priority)
+                {
+                    try
+                    {
+                        messageQueue.InsertAt(i, m);
+                    }
+                    catch (ExceptionExtensions.QueueFullException)
+                    {
+                        throw;
+                    }
+                }
+            }
+        }
         
+        //Checks message queue and adds as many messages to the new packet as can fit seperated by a delimiter
+        //The new packet is sent to the packetQueue
+        void CreateNewPacket()
+        {
+            byte[] packetData = new byte[_maxPacketSizeBytes];
+            int packetDataEndPtr = 0;
+            
+            UInt16 id = currentPacketID;
+            BitArray ackedBits = this.ackedBits;
+            PacketType packetType = PacketType.dataUnreliable;
+            byte[] salt = GetNewSalt();
+
+            while (messageQueue.Length != 0)
+            {
+                if (messageQueue.GetFront().Data.Length <= _maxPacketSizeBytes - Packet.headerSize - packetDataEndPtr)
+                {
+                    Message m = messageQueue.PopFront();
+                    Buffer.BlockCopy(m.Data, 0, packetData, packetDataEndPtr, m.Data.Length);
+                    packetDataEndPtr += m.Data.Length;
+
+                    if(m.Type != Message.MessageType.unreliable)
+                    {
+                        packetType = PacketType.dataReliable;
+                    }
+                }
+            }
+
+            Packet p = new Packet(UInt16 id, BitArray ackedBits, PacketType packetType, byte[] salt, byte[] data = null, byte priority = 0);
+            currentPacketID += 1;
+        }
+
         
+
         //
 
         //Sending unreliable data
@@ -128,11 +185,11 @@ namespace UnityNetworkingLibrary
         static RNGCryptoServiceProvider random = new RNGCryptoServiceProvider(); //Secure random function
 
         
-        static byte[] GetSalt()
+        static byte[] GetNewSalt()
         {
-            return GetSalt(Packet.saltLengthBits);
+            return GetNewSalt(Packet.saltLengthBits);
         }
-        static byte[] GetSalt(int maximumSaltLength)
+        static byte[] GetNewSalt(int maximumSaltLength)
         {
             var salt = new byte[maximumSaltLength];
             random.GetNonZeroBytes(salt);

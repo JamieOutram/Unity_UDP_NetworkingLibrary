@@ -6,46 +6,83 @@ namespace UnityNetworkingLibrary
 {
     class PacketBuffer
     {
+        uint[] idBuffer;
         Packet[] buffer;
+        ushort highestId;
         //int _firstEmptyPtr;
         public int Length
         {
             get { return buffer.Length; }
         }
 
-        public PacketBuffer(int size)
+        public PacketBuffer(uint size)
         {
             buffer = new Packet[size];
+            idBuffer = new uint[size];
+            for(int i = 0; i<size; i++)
+            {
+                idBuffer[i] = uint.MaxValue;
+            }
+            highestId = ushort.MaxValue;
             //_firstEmptyPtr = 0;
         }
 
         public void AddPacket(Packet packet)
         {
-            for (int i = 0; i < buffer.Length; i++)
+            //if id has overflowed back to zero (rarely called)
+            if (packet.Id < buffer.Length && highestId > buffer.Length) 
             {
-                if (buffer[i] == null)
+                //If the last id received was the max value, nothing to erase
+                if (highestId != ushort.MaxValue)
                 {
-                    buffer[i] = packet;
-                    break;
+                    //cycle from current index to top and erase ids between
+                    for (ushort i = (ushort)(highestId + 1); i <= ushort.MaxValue; i++)
+                    {
+                        idBuffer[GetIndex(i)] = uint.MaxValue;
+                    }
                 }
+                highestId = 0;
             }
+            
+            //if it is a new most recent packet (commonly called)
+            if (packet.Id > highestId)
+            {
+                //erase all ids between previous highest and new highest
+                for (ushort i = (ushort)(highestId + 1); i < packet.Id; i++)
+                {
+                    idBuffer[GetIndex(i)] = uint.MaxValue;
+                }
+                highestId = packet.Id;
+            }
+
+            //Finally assign new packet to buffer
+            int index = GetIndex(packet.Id);
+            buffer[index] = packet;
+            idBuffer[index] = packet.Id;
         }
 
         public Packet GetPacket(UInt16 packetId)
         {
-            foreach (Packet p in buffer)
+            int index = GetIndex(packetId);
+            if (idBuffer[index] == packetId)
             {
-                if (p.Id == packetId)
-                {
-                    return p;
-                }
+                return buffer[index];
             }
-            throw new ExceptionExtensions.PacketNotFoundException();
+            else
+            {
+                throw new ExceptionExtensions.PacketNotFoundException();
+            }
         }
 
         public Packet GetPacket(int index)
         {
             return buffer[index];
         }
+
+        int GetIndex(ushort packetId)
+        {
+            return packetId % buffer.Length;
+        }
+
     }
 }

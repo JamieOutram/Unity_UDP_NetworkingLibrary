@@ -66,6 +66,16 @@ namespace UnityNetworkingLibrary
             _length++;
         }
 
+        public T GetFront()
+        {
+            if (_length > 0)
+            {
+                return _queue[_zeroPtr];
+            }
+            else
+                throw new ExceptionExtensions.QueueEmptyException();
+        }
+
         //Returns and removes the first element in the queue
         public T PopFront()
         {
@@ -80,6 +90,18 @@ namespace UnityNetworkingLibrary
                 throw new ExceptionExtensions.QueueEmptyException();
         }
 
+        //Returns and removes the last element in the queue
+        public T PopBack()
+        {
+            if (_length > 0)
+            {
+                T rtn = _queue[AdjustIndex(_length-1)];
+                _length--;
+                return rtn;
+            }
+            else
+                throw new ExceptionExtensions.QueueEmptyException();
+        }
 
         int AdjustIndex(int index)
         {
