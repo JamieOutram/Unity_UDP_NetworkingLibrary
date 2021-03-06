@@ -193,6 +193,9 @@ namespace UnityNetworkingLibrary
             _packetData = stream.ToArray();
 
             _isDirty = false;
+
+            stream.Dispose();
+            writer.Dispose();
         }
 
 
@@ -234,6 +237,9 @@ namespace UnityNetworkingLibrary
             PacketType type = (PacketType)reader.ReadByte();
             UInt64 salt = reader.ReadUInt64();
             byte[] data = reader.ReadBytes(packetData.Length - headerSize);
+
+            stream.Dispose();
+            reader.Dispose();
 
             return (new Header(id, ackedBits, type, salt), data);
         }
