@@ -20,7 +20,6 @@ namespace UnityNetworkingLibrary
     //Server will not bother to send ack back when packet is received immediatly unless flagged as reliable data and decoded without error.
     //Reliable acks could just be empty data packets.
 
-    //TODO: Accessor for data section of packet
     //Future TODO: add some structure to data to allow minor transmission error corrections
     class Packet
     {
@@ -36,11 +35,9 @@ namespace UnityNetworkingLibrary
         //Checksum = 4 bytes, Id = 2 bytes, AckedBytes, packetType = 1 byte, salt = 64bit, data = x bits 
         public const int headerSize = checksumBytes + idBytes + ackedBytesLength + packetTypeBytes + saltBytes;
 
-        public int Length { get { return _packetData.Length; } }
+        public int Length { get { return _messageData.Length + headerSize; } }
 
         public byte Priority { get; set; } //priority needs to be fully editable by packet manager.
-
-        //TODO: These should strictly just be an accessors for part of the full data packet, currently using twice the memory required
 
         //Store values in writeable formats
         UInt16 _id; //Id and bitack need to be editable by packet manager.
@@ -48,12 +45,9 @@ namespace UnityNetworkingLibrary
         PacketType _packetType;
         UInt64 _salt;
         byte[] _messageData;
-        byte[] _packetData; //Full serialized packet data
 
-        bool _isDirty = false;
-
-        //Accessors
-        public UInt16 Id //UInt16 wrapper for _id
+        //Accessors (kept around as they may be useful for validation)
+        public UInt16 Id 
         {
             get
             {
@@ -62,8 +56,6 @@ namespace UnityNetworkingLibrary
             set
             {
                 _id = value;
-                //Sync full packet byte array
-                _isDirty = true;
             }
         }
         public BitArray AckedBits
@@ -77,8 +69,6 @@ namespace UnityNetworkingLibrary
                 if (_ackedBytes == null)
                     _ackedBytes = new byte[ackedBytesLength];
                 value.CopyTo(_ackedBytes, 0);
-                //flag dirty
-                _isDirty = true;
             }
         } //BitArray Wrapper for _ackedBytes
         public PacketType Type
@@ -90,8 +80,6 @@ namespace UnityNetworkingLibrary
             set
             {
                 _packetType = value;
-                //Flag dirty header data
-                _isDirty = true;
             }
         }
         public UInt64 Salt
@@ -103,8 +91,6 @@ namespace UnityNetworkingLibrary
             set
             {
                 _salt = value;
-                //Flag dirty header data
-                _isDirty = true;
             }
         }
         public byte GetMessageData(int i)
@@ -117,14 +103,6 @@ namespace UnityNetworkingLibrary
                 throw new PacketSizeException();
 
             _messageData = value;
-            _isDirty = true;
-        }
-        public byte[] GetPacketData() //Call frugally as it returns a clone of the internal array
-        {
-            if (_isDirty)
-                UpdatePacketData();
-
-            return (byte[])_packetData.Clone();
         }
 
         //Create packet
@@ -136,23 +114,20 @@ namespace UnityNetworkingLibrary
             this.Type = packetType;
             this.Salt = salt;
             this.SetMessageData(data);
-            UpdatePacketData();
         }
 
-
-
-        void UpdatePacketData()
+        public byte[] Serialize()
         {
-            //Calculate packet length
-            int packetLength = headerSize;
-            if (_messageData != null) packetLength += _messageData.Length;
-            else
+            if (_messageData == null)
             {
                 //If no message data provided, add one byte of Empty message data
                 _messageData = new byte[1];
                 _messageData[0] = 0;
             }
 
+            //Calculate packet length
+            int packetLength = headerSize + _messageData.Length;
+            //Based on type may need to pad packet data
             switch (Type) //TODO
             {
                 case PacketType.ClientConnectionRequest:
@@ -163,6 +138,8 @@ namespace UnityNetworkingLibrary
                     //Pad packet data to max size
                     break;
             }
+
+            //Define write stream
             MemoryStream stream = new MemoryStream(packetLength);
             BinaryWriter writer = new BinaryWriter(stream);
 
@@ -175,25 +152,26 @@ namespace UnityNetworkingLibrary
             writer.Write((byte)_packetType);
             writer.Write(_salt);
             writer.Write(_messageData);
-            this._packetData = stream.ToArray();
+            byte[] output = stream.ToArray();
 
             //Calculate checksum
-            UInt32 checksum = Crc32C.Crc32CAlgorithm.Compute(_packetData, checksumBytes, _packetData.Length - checksumBytes);
+            UInt32 checksum = Crc32C.Crc32CAlgorithm.Compute(output, checksumBytes, output.Length - checksumBytes);
 
             //Note: might be faster to buffer.blockcopy checksum into packet data array
             //Change writer position
             writer.Seek(0, SeekOrigin.Begin);
             //Add checksum to front of packet
             writer.Write(checksum);
-            _packetData = stream.ToArray();
+            output = stream.ToArray();
 
-            _isDirty = false;
-
+            //Dispose of write stream
             stream.Dispose();
             writer.Dispose();
+
+            return output;
         }
 
-
+        //Data for header of a decoded packet
         public struct Header
         {
             public UInt16 id;
@@ -209,8 +187,8 @@ namespace UnityNetworkingLibrary
             }
         }
 
-        /*Decodes and breaks up the provided packet
-        * Returns: checksum, id, Acknowledged packet bits, packet type, salt, data
+        /*Deserializes the header from the provided packet
+        * Returns: Tuple (Header, data)
         */
         public static (Header, byte[]) Decode(byte[] packetData)
         {
