@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections;
+using System.IO;
 using UnityNetworkingLibrary.ExceptionExtensions;
 namespace UnityNetworkingLibrary
 {
@@ -23,38 +24,47 @@ namespace UnityNetworkingLibrary
     class Packet
     {
         //Define sizes of packet header data
-        const int checksumBytes = 4;
-        const int idBytes = 2;
+        const int checksumBytes = sizeof(UInt32);
+        const int idBytes = sizeof(UInt16);
         public const byte ackedBytesLength = 4;
         public const byte ackedBitsLength = 8 * ackedBytesLength;
-        const int packetTypeBytes = 1;
-        const int saltBytes = 8;
+        const int packetTypeBytes = sizeof(byte);
+        const int saltBytes = sizeof(UInt64);
         public const int saltLengthBits = 8 * saltBytes;
 
         //Checksum = 4 bytes, Id = 2 bytes, AckedBytes, packetType = 1 byte, salt = 64bit, data = x bits 
         public const int headerSize = checksumBytes + idBytes + ackedBytesLength + packetTypeBytes + saltBytes;
 
+        public int Length { get { return _packetData.Length; } }
+
         public byte Priority { get; set; } //priority needs to be fully editable by packet manager.
 
         //TODO: These should strictly just be an accessors for part of the full data packet, currently using twice the memory required
-        byte[] _id; //Id and bitack need to be editable by packet manager.
-        public UInt16 Id //UInt32 wrapper for _id
+
+        //Store values in writeable formats
+        UInt16 _id; //Id and bitack need to be editable by packet manager.
+        byte[] _ackedBytes; //Encodes last x acknowledged bits. 
+        PacketType _packetType;
+        UInt64 _salt;
+        byte[] _messageData;
+        byte[] _packetData; //Full serialized packet data
+
+        bool _isDirty = false;
+
+        //Accessors
+        public UInt16 Id //UInt16 wrapper for _id
         {
             get
             {
-                return BitConverter.ToUInt16(_id, 0);
+                return _id;
             }
             set
             {
-                _id = BitConverter.GetBytes(value);
+                _id = value;
                 //Sync full packet byte array
-                if (packetData != null)
-                    Buffer.BlockCopy(_id, 0, packetData, checksumBytes, idBytes);
+                _isDirty = true;
             }
         }
-
-        byte[] _ackedBytes; //Encodes last x acknowledged bits. 
-
         public BitArray AckedBits
         {
             get
@@ -66,45 +76,89 @@ namespace UnityNetworkingLibrary
                 if (_ackedBytes == null)
                     _ackedBytes = new byte[ackedBytesLength];
                 value.CopyTo(_ackedBytes, 0);
-                //Sync full packet byte array
-                if (packetData != null)
-                    Buffer.BlockCopy(_ackedBytes, 0, packetData, checksumBytes + idBytes, ackedBytesLength);
+                //flag dirty
+                _isDirty = true;
             }
         } //BitArray Wrapper for _ackedBytes
-
-        byte[] _packetType;
         public PacketType Type
         {
             get
             {
-                return (PacketType)_packetType[0];
+                return _packetType;
             }
             set
             {
-                if (_packetType == null) _packetType = new byte[packetTypeBytes];
-                _packetType[0] = (byte)value;
-                //Update packet data
-                if (packetData != null)
-                    Buffer.BlockCopy(_packetType, 0, packetData, checksumBytes + idBytes + ackedBytesLength, packetTypeBytes);
+                _packetType = value;
+                //Flag dirty header data
+                _isDirty = true;
+            }
+        }
+        public UInt64 Salt
+        {
+            get
+            {
+                return _salt;
+            }
+            set
+            {
+                _salt = value;
+                //Flag dirty header data
+                _isDirty = true;
+            }
+        }
+        public byte[] MessageData
+        {
+            get
+            {
+                return (byte[])_messageData.Clone();
+            }
+            set
+            {
+                if (value.Length + headerSize > PacketManager._maxPacketSizeBytes)
+                    throw new PacketSizeException();
+
+                _messageData = value;
+                _isDirty = true;
+            }
+        }
+        public byte[] PacketData
+        {
+            get
+            {
+                if (_isDirty)
+                    UpdatePacketData();
+
+                return _packetData;
             }
         }
 
-        byte[] packetData; //Full serialized packet data
-        public byte[] PacketData { get { return packetData; } }
-
         //Create packet
-        public Packet(UInt16 id, BitArray ackedBits, PacketType packetType, byte[] salt, byte[] data = null, byte priority = 0)
+        public Packet(UInt16 id, BitArray ackedBits, PacketType packetType, UInt64 salt, byte[] data = null, byte priority = 0)
         {
-
             this.Priority = priority;
             this.Id = id;
             this.AckedBits = ackedBits;
-            var tmpPacketType = new byte[1];
-            tmpPacketType[0] = (byte)packetType;
+            this.Type = packetType;
+            this.Salt = salt;
+            this.MessageData = data;
+            UpdatePacketData();
+        }
+
+        
+
+        void UpdatePacketData()
+        {
+            //Calculate packet length
             int packetLength = headerSize;
-            if (data != null) packetLength += data.Length;
-            else data = new byte[0];
-            switch (packetType)
+            if (_messageData != null) packetLength += _messageData.Length;
+            else
+            {
+                //If no message data provided, add one byte of Empty message data
+                _messageData = new byte[1];
+                _messageData[0] = 0;
+            } 
+
+            switch (Type) //TODO
             {
                 case PacketType.ClientConnectionRequest:
                     //Pad packet data to max size
@@ -114,37 +168,74 @@ namespace UnityNetworkingLibrary
                     //Pad packet data to max size
                     break;
             }
+            MemoryStream stream = new MemoryStream(packetLength);
+            BinaryWriter writer = new BinaryWriter(stream);
+
+            //Set writing position to after checksum
+            writer.Seek(checksumBytes, SeekOrigin.Begin);
+
             //Construct byte array for checksum
-            this.packetData = new byte[packetLength];
-            Utils.CombineArrays(ref packetData, checksumBytes, _id, _ackedBytes, tmpPacketType, salt, data);
+            writer.Write(_id);
+            writer.Write(_ackedBytes);
+            writer.Write((byte)_packetType);
+            writer.Write(_salt);
+            writer.Write(_messageData);
+            this._packetData = stream.ToArray();
 
             //Calculate checksum
-            byte[] checksum = BitConverter.GetBytes(Crc32C.Crc32CAlgorithm.Compute(packetData, checksumBytes, packetData.Length - checksumBytes));
+            UInt32 checksum = Crc32C.Crc32CAlgorithm.Compute(_packetData, checksumBytes, _packetData.Length - checksumBytes);
 
+            //Note: might be faster to buffer.blockcopy checksum into packet data array
+            //Change writer position
+            writer.Seek(0, SeekOrigin.Begin);
             //Add checksum to front of packet
-            Buffer.BlockCopy(checksum, 0, this.packetData, 0, checksumBytes);
+            writer.Write(checksum);
+            _packetData = stream.ToArray();
+
+            _isDirty = false;
+        }
+
+
+        public struct Header
+        {
+            public UInt16 id;
+            public BitArray ackedBits;
+            public PacketType packetType;
+            public UInt64 salt;
+            public Header(UInt16 id, BitArray ackedBits, PacketType packetType, UInt64 salt)
+            {
+                this.id = id;
+                this.ackedBits = ackedBits;
+                this.packetType = packetType;
+                this.salt = salt;
+            }
         }
 
         /*Decodes and breaks up the provided packet
         * Returns: checksum, id, Acknowledged packet bits, packet type, salt, data
         */
-        public static (UInt32, UInt16, BitArray, PacketType, byte[], byte[]) Decode(byte[] packetData)
+        public static (Header, byte[]) Decode(byte[] packetData)
         {
-            //Split packet data
-            byte[][] dataBytes = Utils.SplitArray(packetData, new int[] { checksumBytes, idBytes, ackedBytesLength, packetTypeBytes, saltBytes, packetData.Length - headerSize });
+            if (packetData.Length > PacketManager._maxPacketSizeBytes)
+                throw new PacketSizeException();
 
-            UInt32 checksum = BitConverter.ToUInt32(dataBytes[0], 0);
+            MemoryStream stream = new MemoryStream(packetData);
+            BinaryReader reader = new BinaryReader(stream);
+
+            //Read checksum off front
+            UInt32 checksum = reader.ReadUInt32();
             //Throw an error if Checksum does not match expected
             if (checksum != Crc32C.Crc32CAlgorithm.Compute(packetData, checksumBytes, packetData.Length - checksumBytes))
                 throw new PacketChecksumException();
 
-            UInt16 id = BitConverter.ToUInt16(dataBytes[1], 0);
-            BitArray ackedBits = new BitArray(dataBytes[2]);
-            PacketType type = (PacketType)dataBytes[3][0];
-            byte[] salt = dataBytes[4];
-            byte[] data = dataBytes[5];
+            //Read remaining data in order
+            UInt16 id = reader.ReadUInt16();
+            BitArray ackedBits = new BitArray(reader.ReadBytes(ackedBytesLength));
+            PacketType type = (PacketType)reader.ReadByte();
+            UInt64 salt = reader.ReadUInt64();
+            byte[] data = reader.ReadBytes(packetData.Length - headerSize);
 
-            return (checksum, id, ackedBits, type, salt, data);
+            return (new Header(id, ackedBits, type, salt), data);
         }
     }
 }
