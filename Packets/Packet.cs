@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.IO;
+using System.Collections.ObjectModel;
 using UnityNetworkingLibrary.ExceptionExtensions;
 namespace UnityNetworkingLibrary
 {
@@ -106,30 +107,24 @@ namespace UnityNetworkingLibrary
                 _isDirty = true;
             }
         }
-        public byte[] MessageData
+        public byte GetMessageData(int i)
         {
-            get
-            {
-                return (byte[])_messageData.Clone();
-            }
-            set
-            {
-                if (value.Length + headerSize > PacketManager._maxPacketSizeBytes)
-                    throw new PacketSizeException();
-
-                _messageData = value;
-                _isDirty = true;
-            }
+            return _messageData[i];
         }
-        public byte[] PacketData
+        public void SetMessageData(byte[] value)
         {
-            get
-            {
-                if (_isDirty)
-                    UpdatePacketData();
+            if (value.Length + headerSize > PacketManager._maxPacketSizeBytes)
+                throw new PacketSizeException();
 
-                return _packetData;
-            }
+            _messageData = value;
+            _isDirty = true;
+        }
+        public byte[] GetPacketData() //Call frugally as it returns a clone of the internal array
+        {
+            if (_isDirty)
+                UpdatePacketData();
+
+            return (byte[])_packetData.Clone();
         }
 
         //Create packet
@@ -140,11 +135,11 @@ namespace UnityNetworkingLibrary
             this.AckedBits = ackedBits;
             this.Type = packetType;
             this.Salt = salt;
-            this.MessageData = data;
+            this.SetMessageData(data);
             UpdatePacketData();
         }
 
-        
+
 
         void UpdatePacketData()
         {
@@ -156,7 +151,7 @@ namespace UnityNetworkingLibrary
                 //If no message data provided, add one byte of Empty message data
                 _messageData = new byte[1];
                 _messageData[0] = 0;
-            } 
+            }
 
             switch (Type) //TODO
             {
