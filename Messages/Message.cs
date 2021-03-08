@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using System.IO;
@@ -20,24 +21,56 @@ namespace UnityNetworkingLibrary
         public const int _messageHeaderBytes = _messageLengthBytes + _messageTypeBytes;
 
         //Every message has a priority for local ordering but the priority is not part of the message
-        public int Priority { get; set; } 
-        public UInt16 Bytes { get; protected set; } //full serialized message size in bytes
-        public MessageType Type { get; private set; }
+        public byte Priority { get; set; }
+        public abstract UInt16 Length { get; } //full serialized message size in bytes
+        public abstract MessageType Type { get; }
+        public abstract bool IsReliable { get; } //If set to true the message's packet will be flaged as reliable
 
-        public Message() 
+        public Message()
         {
             this.Priority = 0;
-            this.Type = MessageType.None;
-            this.Bytes = 0;
         }
 
-        public Message(int priority, MessageType type)
+        protected virtual void SerializeHeader(BinaryWriter writer)
         {
-            this.Priority = priority;
-            this.Type = type;
-            this.Bytes = _messageHeaderBytes; 
+            writer.Write(Length);
+            writer.Write((byte)Type);
         }
-        
-        public abstract byte[] Serialize();
+
+        protected abstract void SerializeData(BinaryWriter writer);
+
+        public byte[] Serialize()
+        {
+            MemoryStream stream = new MemoryStream(Length);
+            BinaryWriter writer = new BinaryWriter(stream);
+            try
+            {
+                SerializeHeader(writer);
+                SerializeData(writer);
+                return stream.ToArray();
+            }
+            catch (EndOfStreamException)
+            {
+                throw new EndOfStreamException();
+            }
+            finally
+            {
+                stream.Dispose();
+                writer.Dispose();
+            }
+        }
+
+        public void Serialize(BinaryWriter writer)
+        {
+            try
+            {
+                SerializeHeader(writer);
+                SerializeData(writer);
+            }
+            catch (EndOfStreamException)
+            {
+                throw new EndOfStreamException();
+            }
+        } 
     }
 }

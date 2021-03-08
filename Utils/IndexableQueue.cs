@@ -1,9 +1,13 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 
+
 namespace UnityNetworkingLibrary
 {
+    using ExceptionExtensions;
+
     //An indexable queue supporting insertion whilst storing in array format
     class IndexableQueue<T>
     {
@@ -26,23 +30,22 @@ namespace UnityNetworkingLibrary
         }
 
         //Returns the element at the given index
-        public T GetAt(int index)
+        public T this[int index]
         {
-            if (index >= _length || index < 0)
+            get
             {
-                throw new IndexOutOfRangeException();
+                ValidateIndex(index);
+                return _queue[AdjustIndex(index)];
             }
-            return _queue[AdjustIndex(index)];
         }
 
         //Inserts value at index by shifting up other elements
         public void InsertAt(int index, T val)
         {
             if (_length == _size)
-                throw new ExceptionExtensions.QueueFullException();
+                throw new QueueFullException();
 
-            if (index > _length || index < 0)
-                throw new IndexOutOfRangeException();
+            ValidateIndex(index);
 
             if (index > _length / 2)
             {
@@ -66,16 +69,6 @@ namespace UnityNetworkingLibrary
             _length++;
         }
 
-        public T GetFront()
-        {
-            if (_length > 0)
-            {
-                return _queue[_zeroPtr];
-            }
-            else
-                throw new ExceptionExtensions.QueueEmptyException();
-        }
-
         //Returns and removes the first element in the queue
         public T PopFront()
         {
@@ -87,20 +80,21 @@ namespace UnityNetworkingLibrary
                 return rtn;
             }
             else
-                throw new ExceptionExtensions.QueueEmptyException();
+                throw new QueueEmptyException();
         }
 
-        //Returns and removes the last element in the queue
-        public T PopBack()
+        //Returns and removes the i'th element in the queue
+        public T PopAt(int index)
         {
+            ValidateIndex(index);
             if (_length > 0)
             {
-                T rtn = _queue[AdjustIndex(_length-1)];
+                T rtn = _queue[AdjustIndex(index)];
                 _length--;
                 return rtn;
             }
             else
-                throw new ExceptionExtensions.QueueEmptyException();
+                throw new QueueEmptyException();
         }
 
         int AdjustIndex(int index)
@@ -108,5 +102,13 @@ namespace UnityNetworkingLibrary
             return (_zeroPtr + index) % _size;
         }
 
+
+        void ValidateIndex(int index)
+        {
+            if (index >= _length || index < 0)
+            {
+                throw new IndexOutOfRangeException();
+            }
+        }
     }
 }
