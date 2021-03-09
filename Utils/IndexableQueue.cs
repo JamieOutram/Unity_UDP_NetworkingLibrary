@@ -9,7 +9,7 @@ namespace UnityNetworkingLibrary
     using ExceptionExtensions;
 
     //An indexable queue supporting insertion whilst storing in array format
-    class IndexableQueue<T>
+    public class IndexableQueue<T>
     {
         T[] _queue;
         int _zeroPtr;

@@ -6,7 +6,7 @@ using UnityNetworkingLibrary.ExceptionExtensions;
 namespace UnityNetworkingLibrary
 {
 
-    enum PacketType
+    public enum PacketType
     {
         None,
         ClientConnectionRequest,
@@ -21,7 +21,7 @@ namespace UnityNetworkingLibrary
     //Reliable acks could just be empty data packets.
 
     //Future TODO: add some structure to data to allow minor transmission error corrections
-    class Packet
+    public class Packet
     {
         //Define sizes of packet header data
         const int checksumBytes = sizeof(UInt32);
@@ -93,6 +93,14 @@ namespace UnityNetworkingLibrary
                 _salt = value;
             }
         }
+
+        //Returns a clone of the packet data.
+        //mainly for testing purpouses, avoid cloning if possible
+        public byte[] GetMessageData() 
+        {
+            return (byte[])_messageData.Clone();
+        }
+
         public byte GetMessageData(int i)
         {
             return _messageData[i];
@@ -118,6 +126,17 @@ namespace UnityNetworkingLibrary
 
         public byte[] Serialize()
         {
+            //Based on type may need to pad packet data
+            if (Type == PacketType.ClientConnectionRequest || Type == PacketType.ClientChallengeResponse)
+            {
+                //Connection request should contain no messages
+                if (_messageData != null) 
+                    throw new InvalidConnectionRequestPacket();
+                //Connection request should be padded to max single packet size
+                _messageData = new byte[PacketManager._maxPacketDataBytes];
+
+            }
+
             if (_messageData == null)
             {
                 //If no message data provided, add one byte of Empty message data
@@ -127,17 +146,7 @@ namespace UnityNetworkingLibrary
 
             //Calculate packet length
             int packetLength = headerSize + _messageData.Length;
-            //Based on type may need to pad packet data
-            switch (Type) //TODO
-            {
-                case PacketType.ClientConnectionRequest:
-                    //Pad packet data to max size
-                    //Do not include salt
-                    break;
-                case PacketType.ClientChallengeResponse:
-                    //Pad packet data to max size
-                    break;
-            }
+
 
             //Define write stream
             MemoryStream stream = new MemoryStream(packetLength);

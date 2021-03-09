@@ -12,15 +12,15 @@ namespace UnityNetworkingLibrary
     //  reliable packets contain at least one reliable message, receive ack before forgotten. resent if no ack recieved.
     //      -various tiers for this which vary burst size and timeout. (larger bursts and timeouts for time critical flags)
     //  blocking packets behave like TCP, only communicating that packet till received ack (for things like end of game)
-    class PacketManager //TODO: decide split into client and server variants/one packet manager per connection;
+    public class PacketManager //TODO: decide split into client and server variants/one packet manager per connection;
     {
-        internal const int _maxPacketSizeBytes = 1024;
-        internal const int _maxPacketSizeBits = 8 * _maxPacketSizeBytes;
-        internal const int _maxPacketDataBytes = _maxPacketSizeBytes - Packet.headerSize;
-        internal const int _messageQueueSize = 200;
-        internal const int _packetQueueSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
-        internal const int _awaitingAckBufferSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
-        internal const int _receiveBufferSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
+        public const int _maxPacketSizeBytes = 1024;
+        public const int _maxPacketSizeBits = 8 * _maxPacketSizeBytes;
+        public const int _maxPacketDataBytes = _maxPacketSizeBytes - Packet.headerSize;
+        public const int _messageQueueSize = 200;
+        public const int _packetQueueSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
+        public const int _awaitingAckBufferSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
+        public const int _receiveBufferSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
 
 
         //Define constants 

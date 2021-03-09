@@ -14,7 +14,7 @@ namespace UnityNetworkingLibrary
         ChallengeResponse,
     }
 
-    abstract class Message
+    public abstract class Message
     {
         const int _messageLengthBytes = sizeof(UInt16);
         const int _messageTypeBytes = sizeof(byte);

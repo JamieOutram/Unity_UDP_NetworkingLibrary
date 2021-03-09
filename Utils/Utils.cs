@@ -48,6 +48,7 @@ namespace UnityNetworkingLibrary
                 outputArrays[i] = new T[size];
                 Buffer.BlockCopy(array, startIndex, outputArrays[i], 0, size);
             }
+            return outputArrays;
         }
 
     }
