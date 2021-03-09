@@ -107,10 +107,28 @@ namespace UnityNetworkingLibrary
         }
         public void SetMessageData(byte[] value)
         {
-            if (value.Length + headerSize > PacketManager._maxPacketSizeBytes)
-                throw new PacketSizeException();
+            //Based on type may need to pad packet data
+            if (Type == PacketType.ClientConnectionRequest || Type == PacketType.ClientChallengeResponse)
+            {
+                //Connection request should contain no messages
+                if (value != null)
+                    throw new InvalidConnectionRequestPacket();
+                //Connection request should be padded to max single packet size
+                _messageData = new byte[PacketManager._maxPacketDataBytes];
+                return;
+            }
 
-            _messageData = value;
+            if (value == null)
+            {
+                _messageData = new byte[1];
+            }
+            else
+            {
+                if (value.Length + headerSize > PacketManager._maxPacketSizeBytes)
+                    throw new PacketSizeException();
+
+                _messageData = value;
+            }
         }
 
         //Create packet
@@ -126,23 +144,6 @@ namespace UnityNetworkingLibrary
 
         public byte[] Serialize()
         {
-            //Based on type may need to pad packet data
-            if (Type == PacketType.ClientConnectionRequest || Type == PacketType.ClientChallengeResponse)
-            {
-                //Connection request should contain no messages
-                if (_messageData != null) 
-                    throw new InvalidConnectionRequestPacket();
-                //Connection request should be padded to max single packet size
-                _messageData = new byte[PacketManager._maxPacketDataBytes];
-
-            }
-
-            if (_messageData == null)
-            {
-                //If no message data provided, add one byte of Empty message data
-                _messageData = new byte[1];
-                _messageData[0] = 0;
-            }
 
             //Calculate packet length
             int packetLength = headerSize + _messageData.Length;
