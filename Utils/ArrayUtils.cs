@@ -2,9 +2,9 @@
 using System.Collections.Generic;
 using System.Text;
 using System.Linq;
-namespace UnityNetworkingLibrary
+namespace UnityNetworkingLibrary.Utils
 {
-    static class Utils
+    static class ArrayUtils
     {
         //Combines multiple arrays into one new array 
         public static T[] CombineArrays<T>(params T[][] arrays)

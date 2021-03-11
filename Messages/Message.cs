@@ -5,6 +5,8 @@ using System.Text;
 using System.IO;
 namespace UnityNetworkingLibrary
 {
+    using Utils;
+
     public enum MessageType //List of different message codes
     {
         None,
@@ -31,18 +33,18 @@ namespace UnityNetworkingLibrary
             this.Priority = 0;
         }
 
-        protected virtual void SerializeHeader(BinaryWriter writer)
+        protected void SerializeHeader(CustomBinaryWriter writer)
         {
-            writer.Write(Length);
-            writer.Write((byte)Type);
+            writer.Write((byte)Type); //type should implicitly define length
         }
 
-        protected abstract void SerializeData(BinaryWriter writer);
-
+        protected abstract void SerializeData(CustomBinaryWriter writer);
+        
+        /* Stream does not need be instantiated for every message, can just have a writer passed;
         public byte[] Serialize()
         {
             MemoryStream stream = new MemoryStream(Length);
-            BinaryWriter writer = new BinaryWriter(stream);
+            CustomBinaryWriter writer = new CustomBinaryWriter(stream);
             try
             {
                 SerializeHeader(writer);
@@ -59,8 +61,9 @@ namespace UnityNetworkingLibrary
                 writer.Dispose();
             }
         }
+        */
 
-        public void Serialize(BinaryWriter writer)
+        public void Serialize(CustomBinaryWriter writer)
         {
             try
             {
@@ -71,6 +74,10 @@ namespace UnityNetworkingLibrary
             {
                 throw new EndOfStreamException();
             }
-        } 
+        }
+
+        //Reads the serialized message data and sets properties
+        //Assumes the header has already been read to identify the packet type
+        public abstract void Deserialize(CustomBinaryReader reader);
     }
 }
