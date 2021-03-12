@@ -5,10 +5,11 @@ using System.Collections.ObjectModel;
 using UnityNetworkingLibrary.ExceptionExtensions;
 namespace UnityNetworkingLibrary
 {
-
+    using Utils;
     public enum PacketType
     {
         None,
+        Ack,
         ClientConnectionRequest,
         ServerChallengeRequest,
         ClientChallengeResponse,
@@ -33,7 +34,7 @@ namespace UnityNetworkingLibrary
         public const int saltLengthBits = 8 * saltBytes;
 
         //Checksum = 4 bytes, Id = 2 bytes, AckedBytes, packetType = 1 byte, salt = 64bit, data = x bits 
-        public const int headerSize = checksumBytes + idBytes + ackedBytesLength + packetTypeBytes + saltBytes;
+        public const int headerSize = checksumBytes + idBytes*2 + ackedBytesLength + packetTypeBytes + saltBytes;
 
         public int Length { get { return _messageData.Length + headerSize; } }
 
@@ -41,6 +42,7 @@ namespace UnityNetworkingLibrary
 
         //Store values in writeable formats
         UInt16 _id; //Id and bitack need to be editable by packet manager.
+        UInt16 _ackId; //Id of last received packet
         byte[] _ackedBytes; //Encodes last x acknowledged bits. 
         PacketType _packetType;
         UInt64 _salt;
@@ -56,6 +58,17 @@ namespace UnityNetworkingLibrary
             set
             {
                 _id = value;
+            }
+        }
+        public UInt16 AckId
+        {
+            get
+            {
+                return _ackId;
+            }
+            set
+            {
+                _ackId = value;
             }
         }
         public BitArray AckedBits
@@ -132,10 +145,11 @@ namespace UnityNetworkingLibrary
         }
 
         //Create packet
-        public Packet(UInt16 id, BitArray ackedBits, PacketType packetType, UInt64 salt, byte[] data = null, byte priority = 0)
+        public Packet(UInt16 id, UInt16 ackId, BitArray ackedBits, PacketType packetType, UInt64 salt, byte[] data = null, byte priority = 0)
         {
             this.Priority = priority;
             this.Id = id;
+            this.AckId = ackId;
             this.AckedBits = ackedBits;
             this.Type = packetType;
             this.Salt = salt;
@@ -158,6 +172,7 @@ namespace UnityNetworkingLibrary
 
             //Construct byte array for checksum
             writer.Write(_id);
+            writer.Write(_ackId);
             writer.Write(_ackedBytes);
             writer.Write((byte)_packetType);
             writer.Write(_salt);
@@ -185,12 +200,14 @@ namespace UnityNetworkingLibrary
         public struct Header
         {
             public UInt16 id;
+            public UInt16 ackId;
             public BitArray ackedBits;
             public PacketType packetType;
             public UInt64 salt;
-            public Header(UInt16 id, BitArray ackedBits, PacketType packetType, UInt64 salt)
+            public Header(UInt16 id, UInt16 ackId, BitArray ackedBits, PacketType packetType, UInt64 salt)
             {
                 this.id = id;
+                this.ackId = ackId;
                 this.ackedBits = ackedBits;
                 this.packetType = packetType;
                 this.salt = salt;
@@ -206,7 +223,7 @@ namespace UnityNetworkingLibrary
                 throw new PacketSizeException();
 
             MemoryStream stream = new MemoryStream(packetData);
-            BinaryReader reader = new BinaryReader(stream);
+            CustomBinaryReader reader = new CustomBinaryReader(stream);
 
             //Read checksum off front
             UInt32 checksum = reader.ReadUInt32();
@@ -216,6 +233,7 @@ namespace UnityNetworkingLibrary
 
             //Read remaining data in order
             UInt16 id = reader.ReadUInt16();
+            UInt16 ackId = reader.ReadUInt16();
             BitArray ackedBits = new BitArray(reader.ReadBytes(ackedBytesLength));
             PacketType type = (PacketType)reader.ReadByte();
             UInt64 salt = reader.ReadUInt64();
@@ -224,7 +242,7 @@ namespace UnityNetworkingLibrary
             stream.Dispose();
             reader.Dispose();
 
-            return (new Header(id, ackedBits, type, salt), data);
+            return (new Header(id, ackId, ackedBits, type, salt), data);
         }
     }
 }

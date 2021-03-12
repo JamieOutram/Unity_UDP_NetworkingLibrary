@@ -44,6 +44,8 @@ namespace UnityNetworkingLibrary
                 highestId = 0;
             }
             
+            //TODO: Detect if overflow then backfill (See packet manager)
+
             //if it is a new most recent packet (commonly called)
             if (packet.Id > highestId)
             {

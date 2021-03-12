@@ -49,6 +49,13 @@ namespace UnityNetworkingLibrary
             public InvalidConnectionRequestPacket() { }
         }
 
+        //------------PACKET_MANAGMENT---------
+        [Serializable]
+        public class PacketIdTooOldOrNew : Exception
+        {
+            public PacketIdTooOldOrNew() { }
+        }
+
         //---------------QUEUE----------------
         [Serializable]
         //IndexableQueue Is full and cannot accept any more entries

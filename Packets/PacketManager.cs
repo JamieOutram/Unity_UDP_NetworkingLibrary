@@ -1,11 +1,12 @@
 ﻿using System;
 using System.Collections;
-using System.Security.Cryptography;
 using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
 namespace UnityNetworkingLibrary
 {
     using ExceptionExtensions;
-
+    using Utils;
     //Mangages ordering and priority of packets to send
     //Options: unreliable, reliable and blocking data in packets
     //  unreliable packets are completely unreliable data, sent in one burst and forgotten
@@ -30,13 +31,14 @@ namespace UnityNetworkingLibrary
         const int _reliableTriggerBurstLength = 10; // " for reliable trigger data
         TimeSpan _reliableInterval = TimeSpan.FromMilliseconds(100); //timeout after reliable burst before assuming not received in ms NOTE: should be rarely triggered thanks to ackedbits
         BitArray ackedBits = new BitArray(Packet.ackedBitsLength); //Acknowledgement bits for the last ackedBitsLength received packet ids
-        UInt16 lastPacketIdReceived = 0; //value set to id of latest receieved packet
+        UInt16 latestPacketIdReceived = 0; //value set to id of latest receieved packet
         UInt16 currentPacketID = 0; //value incremented and assigned to each packet in the send queue
         IndexableQueue<Message> messageQueue; //Messages to be sent are added to this queue acording to priority.
         IndexableQueue<Packet> packetQueue; //prepared packets waiting to be sent, fairly short queue which allows pushing of unacknowledged packets to front 
         PacketBuffer awaitingAckBuffer; //buffer storing reliable messages awaiting acknowledgement.
         PacketBuffer receiveBuffer; //When reliable packet id skipped, any more received packets are added to this buffer while waiting for resend.
 
+        static RNGCryptoServiceProvider random = new RNGCryptoServiceProvider(); //Secure random function
         ulong salt;
 
         UDPSocket socket;
@@ -144,7 +146,7 @@ namespace UnityNetworkingLibrary
 
             //TODO: If it's in the message queue order should not matter, so pack as many as possible
             MemoryStream stream = new MemoryStream(_maxPacketSizeBytes);
-            BinaryWriter writer = new BinaryWriter(stream);
+            CustomBinaryWriter writer = new CustomBinaryWriter(stream);
             int length = messageQueue.Length; //as messageQueue.length changes within the loop we need to cashe the initial length 
             for (int i = 0; i < length; i++)
             {
@@ -165,7 +167,7 @@ namespace UnityNetworkingLibrary
                 }
             }
             //Create packet from stream
-            Packet p = new Packet(currentPacketID, ackedBits, packetType, salt, stream.ToArray(), priority);
+            Packet p = new Packet(currentPacketID, latestPacketIdReceived, ackedBits, packetType, salt, stream.ToArray(), priority);
             QueuePacket(p);
             currentPacketID += 1;
 
@@ -207,9 +209,99 @@ namespace UnityNetworkingLibrary
         //Prefer option 2, combined with a Selectve repeat Protocol
 
 
+        void UpdateAckInfo(UInt16 idReceived)
+        {
+            //if more than the encoded bits are missed packet should be treated as missed and a resend from latest received should be requested.
+            const UInt16 maxMissedPackets = Packet.ackedBitsLength;
+            
+            //Get index of first 0 in bit array
+            int i = 0;
+            for(i = 0; i<Packet.ackedBitsLength; i++)
+            {
+                //Check for first unacked message
+                if (!ackedBits[i])
+                {
+                    break;
+                }
+            }
+            //Calculate id of oldest unacked message 
+            ushort oldestUnAckedId = (ushort)(latestPacketIdReceived - (Packet.ackedBitsLength - i + 1));
+            ushort newAndAcceptableLimit = (ushort)(oldestUnAckedId + maxMissedPackets);
+            ushort oldAndAcceptableLimit = (ushort)(latestPacketIdReceived - maxMissedPackets);
 
-        static RNGCryptoServiceProvider random = new RNGCryptoServiceProvider(); //Secure random function
+            if (idReceived > newAndAcceptableLimit) 
+            {
+                //may be a backfill packet overflow or out of range new packet
+                if (idReceived >= oldAndAcceptableLimit)
+                {
+                    //backfill overflow packet
 
+                }
+                else
+                {
+                    //discard and throw error
+                    throw new PacketIdTooOldOrNew();
+                }
+            }
+            else if (idReceived < oldAndAcceptableLimit) 
+            {
+                //may be a latest packet overflow or out of range old packet
+                if (idReceived <= newAndAcceptableLimit)
+                {
+                    //new latest packet overflow
+
+                }
+                else
+                {
+                    //discard and throw error
+                    throw new PacketIdTooOldOrNew();
+                }
+            }
+            else
+            {
+                //No overflow case 
+            }
+
+
+
+            if (idReceived > latestPacketIdReceived)
+            {
+                //Detect if out of order after overflow
+                if(idReceived > latestPacketIdReceived - maxMissedPackets && idReceived > (ushort)(latestPacketIdReceived + maxMissedPackets))
+                {
+                    //arrived out of order after overflow
+                }
+                else if()
+                {
+                    if()
+                    //Common latest packet case
+                    
+                    
+                }
+
+
+            }
+            else
+            {
+                //Detect If overflowed
+                if (idReceived < _outOfOrderBacktrack && latestPacketIdReceived > _receiveBufferSize)
+                {
+                    //Rare overflow case
+                }
+                else
+                {
+                    //Arrived out of order case
+                }
+            }
+
+            latestPacketIdReceived = idReceived;
+            //Calculate acked bit array
+            BitArray newArray = new BitArray(Packet.ackedBitsLength);
+            if (id)
+                ackedBits = ackedBits >> ;
+        }
+
+        
 
         static byte[] GetNewSalt()
         {
