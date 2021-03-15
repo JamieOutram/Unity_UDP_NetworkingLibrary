@@ -4,6 +4,8 @@ using System.Text;
 
 namespace UnityNetworkingLibrary
 {
+    using ExceptionExtensions;
+
     class PacketBuffer
     {
         uint[] idBuffer;
@@ -29,12 +31,12 @@ namespace UnityNetworkingLibrary
 
         public void AddPacket(Packet packet)
         {
-            PacketManager.NewIdState state = PacketManager.GetNewOverflowingIdState(packet.Id, highestId, (ushort)(packet.Id - buffer.Length), (ushort)(packet.Id + buffer.Length));
-            if (state == PacketManager.NewIdState.Invalid)
+            IdBufferEntryState state = GetIdBufferEntryState(packet.Id, highestId, (ushort)(packet.Id - buffer.Length), (ushort)(packet.Id + buffer.Length));
+            if (state == IdBufferEntryState.Invalid)
                 return; //Dont change buffer if adding an invalid packet is attempted
 
             //For new entries need to erase old entries
-            if(state == PacketManager.NewIdState.New)
+            if(state == IdBufferEntryState.New)
             {
                 //Erase all entries from previous highest+1 to new id
                 ushort i = highestId;
@@ -76,5 +78,78 @@ namespace UnityNetworkingLibrary
             return packetId % buffer.Length;
         }
 
+
+        public enum IdBufferEntryState
+        {
+            Old,
+            New,
+            Invalid,
+        }
+        //Returns wether the new id to be set is old, new or out of acceptable bounds
+        public static IdBufferEntryState GetIdBufferEntryState(ushort newId, ushort latestId, ushort LB, ushort UB)
+        {
+            if (LB < UB)
+            {
+                //Case 1: no overflow
+                if (latestId < newId && newId <= UB)
+                {
+                    //new packet
+                    return IdBufferEntryState.New;
+                }
+                else if (LB <= newId && newId <= latestId)
+                {
+                    //out of order packet or duplicate latest
+                    return IdBufferEntryState.Old;
+                }
+                else
+                {
+                    //out of bounds packet
+                    return IdBufferEntryState.Invalid;
+                }
+            }
+            else if (latestId > UB)
+            {
+                //Case 2: new packet ids could overflow 
+                if (latestId < newId || newId <= UB)
+                {
+                    //new packet
+                    return IdBufferEntryState.New;
+                }
+                else if (LB <= newId && newId <= latestId)
+                {
+                    //out of order packet or duplicate latest
+                    return IdBufferEntryState.Old;
+                }
+                else
+                {
+                    //out of bounds packet
+                    return IdBufferEntryState.Invalid;
+                }
+            }
+            else if (LB > latestId)
+            {
+                //Case 3: old packet ids could underflow
+                if (latestId < newId && newId <= UB)
+                {
+                    //new packet
+                    return IdBufferEntryState.New;
+                }
+                else if (LB <= newId || newId <= latestId)
+                {
+                    //out of order packet or duplicate latest
+                    return IdBufferEntryState.Old;
+                }
+                else
+                {
+                    //out of bounds packet
+                    return IdBufferEntryState.Invalid;
+                }
+            }
+            else
+            {
+                //Logic/State Error
+                throw new OverflowingIdStateException();
+            }
+        }
     }
 }

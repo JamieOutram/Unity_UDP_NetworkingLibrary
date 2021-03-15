@@ -209,7 +209,7 @@ namespace UnityNetworkingLibrary
         //Prefer option 2, combined with a Selectve repeat Protocol
 
         //Returns an enumeration indicating wether the new packet is old, new or invalid 
-        NewIdState CheckReceivedPacketId(ushort idReceived)
+        PacketBuffer.IdBufferEntryState CheckReceivedPacketId(ushort idReceived)
         {
             //if more than the encoded bits are missed packet should be treated as missed and a resend from latest received should be requested.
             const UInt16 maxMissedPackets = Packet.ackedBitsLength;
@@ -230,14 +230,14 @@ namespace UnityNetworkingLibrary
             ushort oldAndAcceptableLimit = (ushort)(latestPacketIdReceived - maxMissedPackets);
 
             //3 ouput cases: invalid, old message, new message
-            NewIdState state = GetNewOverflowingIdState(idReceived, latestPacketIdReceived, oldAndAcceptableLimit, newAndAcceptableLimit);
+            PacketBuffer.IdBufferEntryState state = PacketBuffer.GetIdBufferEntryState(idReceived, latestPacketIdReceived, oldAndAcceptableLimit, newAndAcceptableLimit);
             return state;
         }
 
         //Assumes id has been checked and updates ack info accordingly 
-        void UpdateAckInfo(NewIdState state, ushort idReceived)
+        void UpdateAckInfo(PacketBuffer.IdBufferEntryState state, ushort idReceived)
         {
-            if (state == NewIdState.Invalid)
+            if (state == PacketBuffer.IdBufferEntryState.Invalid)
                 return; //no update for invalid packet
 
             //Calculate acked bit array
@@ -246,7 +246,7 @@ namespace UnityNetworkingLibrary
             int idDiff;
             switch (state)
             {
-                case NewIdState.New:
+                case PacketBuffer.IdBufferEntryState.New:
                     idDiff = (idReceived - latestPacketIdReceived) % Packet.ackedBitsLength;//Should handle overflow cases
                     //latest bit is at index 0 so left shift acks by diff and throw error if unacked packet found;
                     overflows = ackBitArray << idDiff;
@@ -259,7 +259,7 @@ namespace UnityNetworkingLibrary
                     ackBitArray[0] = true;
                     latestPacketIdReceived = idReceived;
                     break;
-                case NewIdState.Old:
+                case PacketBuffer.IdBufferEntryState.Old:
                     //Set acknowledgment bit for id position to true;
                     idDiff = (latestPacketIdReceived - idReceived) % Packet.ackedBitsLength;
                     ackBitArray[idDiff] = true;
@@ -280,80 +280,5 @@ namespace UnityNetworkingLibrary
             random.GetNonZeroBytes(salt);
             return salt;
         }
-
-        //At a basic level Every packet needs a checksum (CRC32), dataformat, salt (server or client or xor), data 
-        public enum NewIdState
-        {
-            Old,
-            New,
-            Invalid,
-        }
-        //Returns wether the new id to be set is old, new or out of acceptable bounds
-        public static NewIdState GetNewOverflowingIdState(ushort newId, ushort latestId, ushort LB, ushort UB)
-        {
-            if (LB < UB)
-            {
-                //Case 1: no overflow
-                if (latestId < newId && newId <= UB)
-                {
-                    //new packet
-                    return NewIdState.New;
-                }
-                else if (LB <= newId && newId <= latestId)
-                {
-                    //out of order packet or duplicate latest
-                    return NewIdState.Old;
-                }
-                else
-                {
-                    //out of bounds packet
-                    return NewIdState.Invalid;
-                }
-            }
-            else if (latestId > UB)
-            {
-                //Case 2: new packet ids could overflow 
-                if (latestId < newId || newId <= UB)
-                {
-                    //new packet
-                    return NewIdState.New;
-                }
-                else if (LB <= newId && newId <= latestId)
-                {
-                    //out of order packet or duplicate latest
-                    return NewIdState.Old;
-                }
-                else
-                {
-                    //out of bounds packet
-                    return NewIdState.Invalid;
-                }
-            }
-            else if (LB > latestId)
-            {
-                //Case 3: old packet ids could underflow
-                if (latestId < newId && newId <= UB)
-                {
-                    //new packet
-                    return NewIdState.New;
-                }
-                else if (LB <= newId || newId <= latestId)
-                {
-                    //out of order packet or duplicate latest
-                    return NewIdState.Old;
-                }
-                else
-                {
-                    //out of bounds packet
-                    return NewIdState.Invalid;
-                }
-            }
-            else
-            {
-                //Logic/State Error
-                throw new OverflowingIdStateException();
-            }
-        }
-
     }
 }
