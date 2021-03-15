@@ -241,34 +241,33 @@ namespace UnityNetworkingLibrary
                 return; //no update for invalid packet
 
             //Calculate acked bit array
+            AckBitArray ackBitArray = new AckBitArray(ackedBits); //Create new copy whilst bit manipulating
             bool[] overflows = new bool[Packet.ackedBitsLength];
-            int diff;
+            int idDiff;
             switch (state)
             {
                 case NewIdState.New:
-                    diff = (idReceived - latestPacketIdReceived) % Packet.ackedBitsLength;//Should handle overflow cases
+                    idDiff = (idReceived - latestPacketIdReceived) % Packet.ackedBitsLength;//Should handle overflow cases
                     //latest bit is at index 0 so left shift acks by diff and throw error if unacked packet found;
-                    overflows = ackedBits << diff;
+                    overflows = ackBitArray << idDiff;
                     //Check for unacknowledged packets
                     foreach (var overflow in overflows) 
                     {
                         if (!overflow)
                             throw new PacketNotAcknowledgedException();
                     }
+                    ackBitArray[0] = true;
                     latestPacketIdReceived = idReceived;
                     break;
                 case NewIdState.Old:
                     //Set acknowledgment bit for id position to true;
-                    diff = (latestPacketIdReceived - idReceived) % Packet.ackedBitsLength;
-                    ackedBits[diff] = true;
+                    idDiff = (latestPacketIdReceived - idReceived) % Packet.ackedBitsLength;
+                    ackBitArray[idDiff] = true;
                     break;
                 default:
                     return;
             }
-
-            
-
-            throw new NotImplementedException();
+            ackedBits = ackBitArray;
         }
 
         static byte[] GetNewSalt()

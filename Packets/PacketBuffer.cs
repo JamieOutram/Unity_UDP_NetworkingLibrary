@@ -29,30 +29,20 @@ namespace UnityNetworkingLibrary
 
         public void AddPacket(Packet packet)
         {
-            //if id has overflowed back to zero (rarely called)
-            if (packet.Id < buffer.Length && highestId > buffer.Length) 
-            {
-                //If the last id received was the max value, nothing to erase
-                if (highestId != ushort.MaxValue)
-                {
-                    //cycle from current index to top and erase ids between
-                    for (ushort i = (ushort)(highestId + 1); i <= ushort.MaxValue; i++)
-                    {
-                        idBuffer[GetIndex(i)] = uint.MaxValue;
-                    }
-                }
-                highestId = 0;
-            }
-            
-            //TODO: Detect if overflow then backfill (See packet manager)
+            PacketManager.NewIdState state = PacketManager.GetNewOverflowingIdState(packet.Id, highestId, (ushort)(packet.Id - buffer.Length), (ushort)(packet.Id + buffer.Length));
+            if (state == PacketManager.NewIdState.Invalid)
+                return; //Dont change buffer if adding an invalid packet is attempted
 
-            //if it is a new most recent packet (commonly called)
-            if (packet.Id > highestId)
+            //For new entries need to erase old entries
+            if(state == PacketManager.NewIdState.New)
             {
-                //erase all ids between previous highest and new highest
-                for (ushort i = (ushort)(highestId + 1); i < packet.Id; i++)
+                //Erase all entries from previous highest+1 to new id
+                ushort i = highestId;
+                i += 1;
+                while (i != packet.Id) //due to overflow could be above or below
                 {
                     idBuffer[GetIndex(i)] = uint.MaxValue;
+                    i += 1;
                 }
                 highestId = packet.Id;
             }
