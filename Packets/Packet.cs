@@ -71,17 +71,15 @@ namespace UnityNetworkingLibrary
                 _ackId = value;
             }
         }
-        public BitArray AckedBits
+        public AckBitArray AckedBits
         {
             get
             {
-                return new BitArray(_ackedBytes);
+                return new AckBitArray(_ackedBytes);
             }
             set
             {
-                if (_ackedBytes == null)
-                    _ackedBytes = new byte[ackedBytesLength];
-                value.CopyTo(_ackedBytes, 0);
+                _ackedBytes = value.ToBytes();
             }
         } //BitArray Wrapper for _ackedBytes
         public PacketType Type
@@ -145,7 +143,7 @@ namespace UnityNetworkingLibrary
         }
 
         //Create packet
-        public Packet(UInt16 id, UInt16 ackId, BitArray ackedBits, PacketType packetType, UInt64 salt, byte[] data = null, byte priority = 0)
+        public Packet(UInt16 id, UInt16 ackId, AckBitArray ackedBits, PacketType packetType, UInt64 salt, byte[] data = null, byte priority = 0)
         {
             this.Priority = priority;
             this.Id = id;
@@ -201,10 +199,10 @@ namespace UnityNetworkingLibrary
         {
             public UInt16 id;
             public UInt16 ackId;
-            public BitArray ackedBits;
+            public AckBitArray ackedBits;
             public PacketType packetType;
             public UInt64 salt;
-            public Header(UInt16 id, UInt16 ackId, BitArray ackedBits, PacketType packetType, UInt64 salt)
+            public Header(UInt16 id, UInt16 ackId, AckBitArray ackedBits, PacketType packetType, UInt64 salt)
             {
                 this.id = id;
                 this.ackId = ackId;
@@ -234,7 +232,7 @@ namespace UnityNetworkingLibrary
             //Read remaining data in order
             UInt16 id = reader.ReadUInt16();
             UInt16 ackId = reader.ReadUInt16();
-            BitArray ackedBits = new BitArray(reader.ReadBytes(ackedBytesLength));
+            AckBitArray ackedBits = new AckBitArray(reader.ReadBytes(ackedBytesLength));
             PacketType type = (PacketType)reader.ReadByte();
             UInt64 salt = reader.ReadUInt64();
             byte[] data = reader.ReadBytes(packetData.Length - headerSize);

@@ -56,6 +56,11 @@ namespace UnityNetworkingLibrary
             public PacketIdTooOldOrNew() { }
         }
 
+        public class PacketNotAcknowledgedException : Exception
+        {
+            public PacketNotAcknowledgedException() { }
+        }
+
         //---------------QUEUE----------------
         [Serializable]
         //IndexableQueue Is full and cannot accept any more entries
@@ -71,7 +76,13 @@ namespace UnityNetworkingLibrary
             public QueueEmptyException() { }
         }
 
-        
+
+        [Serializable]
+        //When checking old or new id an unexpected state was detected
+        public class OverflowingIdStateException : Exception
+        {
+            public OverflowingIdStateException() { }
+        }
 
     }
 }
