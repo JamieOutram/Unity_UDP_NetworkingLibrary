@@ -3,9 +3,10 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using System.IO;
-namespace UnityNetworkingLibrary
+namespace UnityNetworkingLibrary.Messages
 {
     using Utils;
+    using ExceptionExtensions;
 
     public enum MessageType //List of different message codes
     {
@@ -14,13 +15,13 @@ namespace UnityNetworkingLibrary
         FatalError,
         ChallengeRequest,
         ChallengeResponse,
+        MessageExample,
     }
 
-    public abstract class Message
+    public abstract class Message : IDisposable
     {
-        const int _messageLengthBytes = sizeof(UInt16);
         const int _messageTypeBytes = sizeof(byte);
-        public const int _messageHeaderBytes = _messageLengthBytes + _messageTypeBytes;
+        public const int _messageHeaderBytes = _messageTypeBytes;
 
         //Every message has a priority for local ordering but the priority is not part of the message
         public byte Priority { get; set; }
@@ -35,11 +36,11 @@ namespace UnityNetworkingLibrary
 
         protected void SerializeHeader(CustomBinaryWriter writer)
         {
-            writer.Write((byte)Type); //type should implicitly define length
+            writer.Write((byte)Type); //type should implicitly define length, variable lengths have their own length per variable length type
         }
 
         protected abstract void SerializeData(CustomBinaryWriter writer);
-        
+
         /* Stream does not need be instantiated for every message, can just have a writer passed;
         public byte[] Serialize()
         {
@@ -79,5 +80,29 @@ namespace UnityNetworkingLibrary
         //Reads the serialized message data and sets properties
         //Assumes the header has already been read to identify the packet type
         public abstract void Deserialize(CustomBinaryReader reader);
+
+        public static Message[] DeserializeStream(CustomBinaryReader reader)
+        {
+            try
+            {
+                Deserializer des = new Deserializer(reader);
+                List<Message> messages = new List<Message>();
+                while (!reader.EndOfStream)
+                {
+                    messages.Add(des.GetNextMessage());
+                }
+                return messages.ToArray();
+            }
+            catch (EndOfStreamException)
+            {
+                throw new PacketDeserializationException();
+            }
+        }
+
+
+        public virtual void Dispose()
+        {
+            return; //Nothing to dispose by default, however child members may be disposable types
+        }
     }
 }

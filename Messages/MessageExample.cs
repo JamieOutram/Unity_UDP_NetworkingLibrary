@@ -7,14 +7,17 @@ namespace UnityNetworkingLibrary.Messages
 {
     using Utils;
 
-    class MessageExample : Message
+    public class MessageExample : Message
     {
         public int IntData { get; private set; }
         public string StringData { get; private set; }
 
         public override bool IsReliable => false;
-        public override MessageType Type => MessageType.None;
-        public override UInt16 Length => _messageHeaderBytes + sizeof(int);
+        public override MessageType Type => MessageType.MessageExample;
+        public override UInt16 Length => (ushort)(_messageHeaderBytes + sizeof(int) + StringData.Length*2);
+
+        public MessageExample() { }
+
 
         public MessageExample(int data, string variableData)
         {

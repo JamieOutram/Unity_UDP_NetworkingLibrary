@@ -14,6 +14,11 @@ namespace UnityNetworkingLibrary.Utils
             writer = new System.IO.BinaryWriter(stream);
         }
 
+        public void Seek(int offset, System.IO.SeekOrigin origin)
+        {
+            writer.Seek(offset, origin);
+        }
+
         public void Dispose()
         {
             writer.Dispose();

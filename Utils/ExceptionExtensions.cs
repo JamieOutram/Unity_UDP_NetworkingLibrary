@@ -43,6 +43,11 @@ namespace UnityNetworkingLibrary
             public PacketSizeException() { }
         }
 
+        public class PacketDeserializationException : Exception
+        {
+            public PacketDeserializationException() { }
+        }
+
         [Serializable]
         public class InvalidConnectionRequestPacket : Exception
         {

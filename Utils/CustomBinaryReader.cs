@@ -14,6 +14,9 @@ namespace UnityNetworkingLibrary.Utils
             reader = new System.IO.BinaryReader(stream);
         }
 
+        public System.IO.Stream BaseStream { get { return reader.BaseStream; } }
+        public bool EndOfStream { get { return reader.BaseStream.Length == reader.BaseStream.Position; } }
+        
         public void Dispose()
         {
             reader.Dispose();

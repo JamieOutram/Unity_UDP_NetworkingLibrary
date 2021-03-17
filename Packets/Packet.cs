@@ -6,6 +6,7 @@ using UnityNetworkingLibrary.ExceptionExtensions;
 namespace UnityNetworkingLibrary
 {
     using Utils;
+    using Messages;
     public enum PacketType
     {
         None,
@@ -36,7 +37,8 @@ namespace UnityNetworkingLibrary
         //Checksum = 4 bytes, Id = 2 bytes, AckedBytes, packetType = 1 byte, salt = 64bit, data = x bits 
         public const int headerSize = checksumBytes + idBytes*2 + ackedBytesLength + packetTypeBytes + saltBytes;
 
-        public int Length { get { return _messageData.Length + headerSize; } }
+        int _messagesBytes = 0; 
+        public int Length { get { return _messagesBytes + headerSize; } }
 
         public byte Priority { get; set; } //priority needs to be fully editable by packet manager.
 
@@ -46,7 +48,7 @@ namespace UnityNetworkingLibrary
         byte[] _ackedBytes; //Encodes last x acknowledged bits. 
         PacketType _packetType;
         UInt64 _salt;
-        byte[] _messageData;
+        Message[] _messages;
 
         //Accessors (kept around as they may be useful for validation)
         public UInt16 Id 
@@ -107,43 +109,70 @@ namespace UnityNetworkingLibrary
 
         //Returns a clone of the packet data.
         //mainly for testing purpouses, avoid cloning if possible
-        public byte[] GetMessageData() 
+        public Message[] GetMessages() 
         {
-            return (byte[])_messageData.Clone();
+            return (Message[])_messages.Clone();
         }
 
-        public byte GetMessageData(int i)
+        public Message GetMessage(int i)
         {
-            return _messageData[i];
+            return _messages[i];
         }
-        public void SetMessageData(byte[] value)
+
+        public void SetMessages(Message[] value)
         {
             //Based on type may need to pad packet data
             if (Type == PacketType.ClientConnectionRequest || Type == PacketType.ClientChallengeResponse)
             {
                 //Connection request should contain no messages
-                if (value != null)
+                if (value != null || value?.Length == 0)
                     throw new InvalidConnectionRequestPacket();
                 //Connection request should be padded to max single packet size
-                _messageData = new byte[PacketManager._maxPacketDataBytes];
+                _messagesBytes = PacketManager._maxPacketDataBytes;
                 return;
             }
-
-            if (value == null)
+            else if (value == null)
             {
-                _messageData = new byte[1];
+                _messagesBytes = 0;
+                _messages = new Message[0];
             }
             else
             {
-                if (value.Length + headerSize > PacketManager._maxPacketSizeBytes)
+                //Calculate length
+                _messagesBytes = 0;
+                foreach(Message m in value)
+                {
+                    _messagesBytes += m.Length;
+                }
+                if (this.Length > PacketManager._maxPacketSizeBytes)
                     throw new PacketSizeException();
 
-                _messageData = value;
+                _messages = value;
             }
         }
 
+
+        //Strips all unreliable messages from the packet
+        public void StripUnreliableMessages()
+        {
+            //itterate message array and dispose + set null ref for unreliable messages
+            for(int i = 0; i<_messages.Length; i++)
+            {
+                if (_messages[i] != null)
+                {
+                    if (!_messages[i].IsReliable)
+                    {
+                        _messagesBytes -= _messages[i].Length;
+                        _messages[i].Dispose();
+                        _messages[i] = null;
+                    }
+                }
+            }
+        }
+
+
         //Create packet
-        public Packet(UInt16 id, UInt16 ackId, AckBitArray ackedBits, PacketType packetType, UInt64 salt, byte[] data = null, byte priority = 0)
+        public Packet(UInt16 id, UInt16 ackId, AckBitArray ackedBits, PacketType packetType, UInt64 salt, Message[] messages = null, byte priority = 0)
         {
             this.Priority = priority;
             this.Id = id;
@@ -151,19 +180,15 @@ namespace UnityNetworkingLibrary
             this.AckedBits = ackedBits;
             this.Type = packetType;
             this.Salt = salt;
-            this.SetMessageData(data);
+            this.SetMessages(messages);
         }
 
         public byte[] Serialize()
         {
 
-            //Calculate packet length
-            int packetLength = headerSize + _messageData.Length;
-
-
             //Define write stream
-            MemoryStream stream = new MemoryStream(packetLength);
-            BinaryWriter writer = new BinaryWriter(stream);
+            MemoryStream stream = new MemoryStream(this.Length);
+            CustomBinaryWriter writer = new CustomBinaryWriter(stream);
 
             //Set writing position to after checksum
             writer.Seek(checksumBytes, SeekOrigin.Begin);
@@ -174,22 +199,22 @@ namespace UnityNetworkingLibrary
             writer.Write(_ackedBytes);
             writer.Write((byte)_packetType);
             writer.Write(_salt);
-            writer.Write(_messageData);
+            foreach(Message m in _messages)
+            {
+                if (m != null)
+                {
+                    m.Serialize(writer);
+                }
+            }
             byte[] output = stream.ToArray();
-
-            //Calculate checksum
-            UInt32 checksum = Crc32C.Crc32CAlgorithm.Compute(output, checksumBytes, output.Length - checksumBytes);
-
-            //Note: might be faster to buffer.blockcopy checksum into packet data array
-            //Change writer position
-            writer.Seek(0, SeekOrigin.Begin);
-            //Add checksum to front of packet
-            writer.Write(checksum);
-            output = stream.ToArray();
 
             //Dispose of write stream
             stream.Dispose();
             writer.Dispose();
+
+            //Calculate checksum and copy into array
+            UInt32 checksum = Crc32C.Crc32CAlgorithm.Compute(output, checksumBytes, output.Length - checksumBytes);
+            Buffer.BlockCopy(BitConverter.GetBytes(checksum), 0, output, 0, checksumBytes);
 
             return output;
         }
@@ -215,14 +240,14 @@ namespace UnityNetworkingLibrary
         /*Deserializes the header from the provided packet
         * Returns: Tuple (Header, data)
         */
-        public static (Header, byte[]) Decode(byte[] packetData)
+        public static (Header, Message[]) Deserialize(byte[] packetData)
         {
             if (packetData.Length > PacketManager._maxPacketSizeBytes)
                 throw new PacketSizeException();
 
             MemoryStream stream = new MemoryStream(packetData);
             CustomBinaryReader reader = new CustomBinaryReader(stream);
-
+            
             //Read checksum off front
             UInt32 checksum = reader.ReadUInt32();
             //Throw an error if Checksum does not match expected
@@ -235,12 +260,12 @@ namespace UnityNetworkingLibrary
             AckBitArray ackedBits = new AckBitArray(reader.ReadBytes(ackedBytesLength));
             PacketType type = (PacketType)reader.ReadByte();
             UInt64 salt = reader.ReadUInt64();
-            byte[] data = reader.ReadBytes(packetData.Length - headerSize);
+            Message[] messages = Message.DeserializeStream(reader);
 
             stream.Dispose();
             reader.Dispose();
 
-            return (new Header(id, ackId, ackedBits, type, salt), data);
+            return (new Header(id, ackId, ackedBits, type, salt), messages);
         }
     }
 }

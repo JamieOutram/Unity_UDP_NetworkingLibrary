@@ -7,6 +7,7 @@ namespace UnityNetworkingLibrary
 {
     using ExceptionExtensions;
     using Utils;
+    using Messages;
     //Mangages ordering and priority of packets to send
     //Options: unreliable, reliable and blocking data in packets
     //  unreliable packets are completely unreliable data, sent in one burst and forgotten
@@ -53,24 +54,17 @@ namespace UnityNetworkingLibrary
             socket = sock;
         }
 
-        //Returns the next packet to be sent and moves to awaiting ack buffer if reliable
-        public Packet PopNextPacket()
+        //TODO: Packet Manager should be its own thread
+        //Initiliaize Manager
+
+
+        //Event handle 
+        public void OnReceive()
         {
-            try
-            {
-                Packet packet = packetQueue.PopFront();
-                if (PacketType.dataReliable == packet.Type)
-                {
-                    awaitingAckBuffer.AddPacket(packet);
-                }
-                return packet;
-            }
-            catch (QueueEmptyException)
-            {
-                //If the queue is empty return null
-                return null;
-            }
+
         }
+
+        
 
         public void QueueMessage(Message m)
         {
@@ -89,6 +83,26 @@ namespace UnityNetworkingLibrary
                 }
             }
         }
+
+        //Returns the next packet to be sent and moves to awaiting ack buffer if reliable
+        Packet PopNextPacket()
+        {
+            try
+            {
+                Packet packet = packetQueue.PopFront();
+                if (PacketType.dataReliable == packet.Type)
+                {
+                    awaitingAckBuffer.AddPacket(packet);
+                }
+                return packet;
+            }
+            catch (QueueEmptyException)
+            {
+                //If the queue is empty return null
+                return null;
+            }
+        }
+
         void QueuePacket(Packet p)
         {
             for (int i = packetQueue.Length - 1; i >= 0; i--)
@@ -106,6 +120,8 @@ namespace UnityNetworkingLibrary
                 }
             }
         }
+
+
 
         //Checks message queue and adds as many messages to the new packet as can fit seperated by a delimiter
         //The new packet is sent to the packetQueue
@@ -144,35 +160,38 @@ namespace UnityNetworkingLibrary
             byte priority = messageQueue[0].Priority;
             int packedSize = 0;
 
-            //TODO: If it's in the message queue order should not matter, so pack as many as possible
-            MemoryStream stream = new MemoryStream(_maxPacketSizeBytes);
-            CustomBinaryWriter writer = new CustomBinaryWriter(stream);
+            //Calculate how many messages fit in packet
+            int messageCount = 0;
             int length = messageQueue.Length; //as messageQueue.length changes within the loop we need to cashe the initial length 
             for (int i = 0; i < length; i++)
             {
-                if (messageQueue[0].Length + packedSize <= _maxPacketSizeBytes)
+                if (messageQueue[i].Length + packedSize > _maxPacketDataBytes)
                 {
-                    Message m = messageQueue.PopFront();
-                    if (m.IsReliable)
-                    {
-                        packetType = PacketType.dataReliable;
-                    }
-                    packedSize += m.Length;
-                    m.Serialize(writer);
+                    messageCount = i;
+                    break;
                 }
                 else
                 {
-                    //Stop if cant fit the next message
-                    break;
+                    packedSize += messageQueue[i].Length;
+                }
+            }
+
+            //Declare and populate packed message array
+            Message[] messages = new Message[messageCount];
+            for (int i = 0; i < messages.Length; i++)
+            {
+                messages[i] = messageQueue.PopFront();
+                if (messages[i].IsReliable)
+                {
+                    packetType = PacketType.dataReliable;
                 }
             }
             //Create packet from stream
-            Packet p = new Packet(currentPacketID, latestPacketIdReceived, ackedBits, packetType, salt, stream.ToArray(), priority);
+            Packet p = new Packet(currentPacketID, latestPacketIdReceived, ackedBits, packetType, salt, messages, priority);
             QueuePacket(p);
-            currentPacketID += 1;
+            if(p.Type != PacketType.dataUnreliable) //unreliable packets are shoved on a seperate queue when received rather than normal received buffer
+                currentPacketID += 1;
 
-            stream.Dispose();
-            writer.Dispose();
         }
 
         //
@@ -194,19 +213,22 @@ namespace UnityNetworkingLibrary
         //likely a fair few trash messages taking up bandwidth 
         //If acks are recieved this is efficient
 
+        //Unreliable packets dont need an id as they have no order?
+        //Could either send with no id (prefix header with type first) or add a whole system for figuring out which missing ids have reliable messages;   
 
-        //TODO: Some sort of queue and priority system for sending and receiving packets. 
-        //One main packaging queue of messages, ordered by priority
-        //messages are taken off the queue and assigned a packet id, a burst of that packet is sent, any unreliable data is stripped (or timed out data), and if the packet has any more data it awaits ack or retransmission.   
-        //2 options here could either:
-        //      1. have rolling bursts where each message has its own id attached and duplicates are detected on decode.
-        //          -leads to larger packets and more processing overhead but data can be packaged and sent more efficiently (so less total packets)
-        //          -Adds a LOT of complexity in how packets are created
-        //      2. just send each packet x times (dependant on packet type) so only checks packet id on decode
-        //          -leads to smaller packet size but likely more packets sent
-        //          -any unreliable data can be easily filtered out (flag stored locally) before the packet is resent.
-        //          -easily check for duplicate data from packet id 
-        //Prefer option 2, combined with a Selectve repeat Protocol
+
+        //Ack & resend system:
+        //  received packets placed in input buffer.
+        //  decode in order received
+        //  if unreliable data packet just decode and apply asap (still send ack back) (can be sent with id too but just ignore, maybe seperate buffer?)
+        //  Include latest ack info in unreliable packets as to not dry ack connection, also reply with latest ack when unreliable received and send buffer empty
+        //  if reliable-ordered and none missing decode and apply and send ack back;
+        //  if reliable-ordered and missing id's wait till out of order packets received and reorder.
+        //  if at sender ack recieved indicates missing reliable packets resend else 
+        //  if missing id's not received for ack encoding length (32 atm), (buffer any extra packets received in mean time).
+        //  if large gap from latest id, buffer and request resend from last highest received (likely a burst of packet loss).
+
+
 
         //Returns an enumeration indicating wether the new packet is old, new or invalid 
         PacketBuffer.IdBufferEntryState CheckReceivedPacketId(ushort idReceived)

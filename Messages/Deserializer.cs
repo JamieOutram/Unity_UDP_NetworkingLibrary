@@ -2,18 +2,30 @@
 using System.Collections.Generic;
 using System.Text;
 using System.IO;
-namespace UnityNetworkingLibrary
+namespace UnityNetworkingLibrary.Messages
 {
     using Utils;
+
     //A class Containing all message type deserialization methods which can step through and return messages in the given data 
     public class Deserializer : IDisposable
     {
         MemoryStream messageDataStream;
         CustomBinaryReader reader;
+
+        bool _shouldDispose;
+
         public Deserializer(byte[] messageData)
         {
             this.messageDataStream = new MemoryStream(messageData);
             this.reader = new CustomBinaryReader(this.messageDataStream);
+            _shouldDispose = true;
+        }
+
+        public Deserializer(CustomBinaryReader reader)
+        {
+            this.messageDataStream = null; //only stored for disposal anyway
+            this.reader = reader;
+            _shouldDispose = false;
         }
 
         public Message GetNextMessage()
@@ -29,8 +41,11 @@ namespace UnityNetworkingLibrary
 
         public void Dispose()
         {
-            messageDataStream.Dispose();
-            reader.Dispose();
+            if (_shouldDispose)
+            {
+                messageDataStream.Dispose();
+                reader.Dispose();
+            }
         }
     }
 }
