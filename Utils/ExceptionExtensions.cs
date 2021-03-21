@@ -20,6 +20,11 @@ namespace UnityNetworkingLibrary
             }
         }
 
+        public class SocketNotReadyException: Exception
+        {
+            public SocketNotReadyException() { }
+        }
+
         //---------------PACKETS----------------
         [Serializable]
         //Packet checksum does not match for data (Likely a transmission error has occured)
@@ -49,16 +54,16 @@ namespace UnityNetworkingLibrary
         }
 
         [Serializable]
-        public class InvalidConnectionRequestPacket : Exception
+        public class InvalidConnectionRequestException : Exception
         {
-            public InvalidConnectionRequestPacket() { }
+            public InvalidConnectionRequestException() { }
         }
 
         //------------PACKET_MANAGMENT---------
         [Serializable]
-        public class PacketIdTooOldOrNew : Exception
+        public class PacketIdTooOldOrNewException : Exception
         {
-            public PacketIdTooOldOrNew() { }
+            public PacketIdTooOldOrNewException() { }
         }
 
         public class PacketNotAcknowledgedException : Exception

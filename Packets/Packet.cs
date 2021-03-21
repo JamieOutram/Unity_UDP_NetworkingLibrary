@@ -126,7 +126,7 @@ namespace UnityNetworkingLibrary
             {
                 //Connection request should contain no messages
                 if (value != null || value?.Length == 0)
-                    throw new InvalidConnectionRequestPacket();
+                    throw new InvalidConnectionRequestException();
                 //Connection request should be padded to max single packet size
                 _messagesBytes = PacketManager._maxPacketDataBytes;
                 return;

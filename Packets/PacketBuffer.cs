@@ -33,7 +33,7 @@ namespace UnityNetworkingLibrary
         {
             IdBufferEntryState state = GetIdBufferEntryState(packet.Id, highestId, (ushort)(packet.Id - buffer.Length), (ushort)(packet.Id + buffer.Length));
             if (state == IdBufferEntryState.Invalid)
-                return; //Dont change buffer if adding an invalid packet is attempted
+                throw new PacketIdTooOldOrNewException(); //Dont change buffer if adding an invalid packet is attempted
 
             //For new entries need to erase old entries
             if(state == IdBufferEntryState.New)
@@ -64,7 +64,7 @@ namespace UnityNetworkingLibrary
             }
             else
             {
-                throw new ExceptionExtensions.PacketNotFoundException();
+                throw new PacketNotFoundException();
             }
         }
 

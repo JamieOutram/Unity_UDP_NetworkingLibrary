@@ -16,6 +16,8 @@ namespace UnityNetworkingLibrary
         int _length;
         int _size;
         public int MaxSize { get { return _size; } }
+        public bool IsFull { get { return _length == _size; } }
+        public bool IsEmpty { get { return _length == 0; } }
         public int Length
         {
             get { return _length; }

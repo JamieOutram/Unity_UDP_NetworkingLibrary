@@ -5,6 +5,8 @@ using System.Text;
 
 namespace UnityNetworkingLibrary
 {
+    using ExceptionExtensions;
+
     //Adapted from louis-e/UDPSocket.cs
     //https://gist.github.com/louis-e/888d5031190408775ad130dde353e0fd
 
@@ -20,9 +22,30 @@ namespace UnityNetworkingLibrary
         public delegate void UdpOnReceived(byte[] data, int bytesRead);
         public event UdpOnReceived OnReceived;
 
+        object isReadyLock = new object();
+        public bool _isReady;
+        public bool IsReady //True when the socket is ready to send data
+        {
+            get
+            {
+                lock (isReadyLock)
+                {
+                    return _isReady;
+                }
+            }
+            private set
+            {
+                lock (isReadyLock)
+                {
+                    _isReady = value;
+                }
+            }
+        }
+
         public UDPSocket()
         {
             _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            IsReady = false;
         }
 
         public class State
@@ -38,11 +61,12 @@ namespace UnityNetworkingLibrary
                 _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.ReuseAddress, true);
                 _socket.Bind(new IPEndPoint(IPAddress.Parse(address), port));
                 Receive();
+                IsReady = true;
                 return true;
             }
             catch (SocketException)
             {
-                
+                IsReady = false;
                 return false;
             }
         }
@@ -53,25 +77,48 @@ namespace UnityNetworkingLibrary
             {
                 _socket.Connect(IPAddress.Parse(address), port);
                 Receive();
+                IsReady = true;
                 return true;
             }
             catch (SocketException)
             {
-
+                IsReady = false;
                 return false;
             }
         }
 
         public void Send(string text)
         {
+            
+            IsReady = false;
             byte[] data = Encoding.ASCII.GetBytes(text);
             _socket.BeginSend(data, 0, data.Length, SocketFlags.None, (ar) =>
             {
                 State so = (State)ar.AsyncState;
                 int bytes = _socket.EndSend(ar);
+                IsReady = true;
                 Console.WriteLine("SEND: {0}, {1}", bytes, text);
             }, state);
         }
+
+        public void Send(byte[] data)
+        {
+            
+            if (data.Length > bufSize)
+                throw new PacketSizeException();
+
+            if (IsReady == false)
+                throw new SocketNotReadyException();
+
+            IsReady = false;
+            _socket.BeginSend(data, 0, data.Length, SocketFlags.None, (ar) =>
+            {
+                State so = (State)ar.AsyncState;
+                int bytes = _socket.EndSend(ar);
+                IsReady = true;
+            }, state);
+        }
+
 
         private void Receive()
         {

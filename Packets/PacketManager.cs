@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using System.Collections;
 using System.IO;
 using System.Linq;
@@ -39,6 +40,14 @@ namespace UnityNetworkingLibrary
         PacketBuffer awaitingAckBuffer; //buffer storing reliable messages awaiting acknowledgement.
         PacketBuffer receiveBuffer; //When reliable packet id skipped, any more received packets are added to this buffer while waiting for resend.
 
+
+        //Thread Locks
+        object messageQueueLock = new object(); //Message queue can be changed at any time by public accessor, other queues only effected by manager thread
+        object ackInfoLock = new object(); //ack info could be updated as it is being added to a packet for sending;
+
+
+        public Thread Thread { get; private set; }
+
         static RNGCryptoServiceProvider random = new RNGCryptoServiceProvider(); //Secure random function
         ulong salt;
 
@@ -55,51 +64,95 @@ namespace UnityNetworkingLibrary
         }
 
         //TODO: Packet Manager should be its own thread
-        //Initiliaize Manager
-
-
-        //Event handle 
-        public void OnReceive()
+        //Creates a new thread for the manager, returns refernce to the new thread.
+        Thread InitializeManager()
         {
-
+            Thread = new Thread(new ParameterizedThreadStart(StartManagerAsync));
+            return Thread;
         }
 
-        
+        //Initializes and starts the manager on an asynchronous thread
+        void StartManagerAsync(object obj)
+        {
+            socket.OnReceived += OnReceive;
+        }
+
+        //Manager performs a series of checks and performs certain actions each loop depending on the state of the various buffers
+        void ManagerLoop()
+        {
+            //Note: Could be multithreaded further but sticking with one manager thread for now
+
+            //If the ack buffer is full do not send or add to the packet queue
+            lock (messageQueueLock)
+            {
+                //Fill the packet queue or empty message queue
+                while(!messageQueue.IsEmpty && !packetQueue.IsFull)
+                {
+                    //create next packet from message queue
+                    CreateNextPacketFromQueue();
+                }
+            }
+
+            //If there are packets waiting to be sent and the socket is ready to send
+            //Send all packets waiting to be sent
+            while (!packetQueue.IsEmpty)
+            {
+                if (socket.IsReady)
+                {
+                    SendNextPacket();
+                }
+                //TODO: Add delay so IsReady is yielded
+            }
+
+            //TODO: add exception handling and recovery for thread 
+
+
+            //loop repeats at a given frequency (60 frames per second?)
+        }
+
 
         public void QueueMessage(Message m)
         {
-            for (int i = messageQueue.Length - 1; i >= 0; i--)
+            lock (messageQueueLock) //Ensure no conflict between manager thread and public add message method
             {
-                if (messageQueue[i].Priority >= m.Priority)
+                for (int i = messageQueue.Length - 1; i >= 0; i--)
                 {
-                    try
+                    if (messageQueue[i].Priority >= m.Priority)
                     {
-                        messageQueue.InsertAt(i, m);
-                    }
-                    catch (QueueFullException)
-                    {
-                        throw;
+                        try
+                        {
+                            messageQueue.InsertAt(i, m);
+                        }
+                        catch (QueueFullException)
+                        {
+                            throw;
+                        }
                     }
                 }
             }
         }
 
-        //Returns the next packet to be sent and moves to awaiting ack buffer if reliable
-        Packet PopNextPacket()
+        //Takes the next packet to be sent, attempts to send and moves to awaiting ack buffer if reliable
+        void SendNextPacket()
         {
-            try
+            //Get the packet to be sent
+            Packet p = packetQueue.PopFront();
+            //Add latest ack info to the packet
+            lock (ackInfoLock)
             {
-                Packet packet = packetQueue.PopFront();
-                if (PacketType.dataReliable == packet.Type)
-                {
-                    awaitingAckBuffer.AddPacket(packet);
-                }
-                return packet;
+                p.AckId = latestPacketIdReceived;
+                p.AckedBits = ackedBits;
             }
-            catch (QueueEmptyException)
+
+            //Serialize the packet and send
+            byte[] data = p.Serialize();
+            socket.Send(data);
+
+            //If reliable, add to the awating ack buffer
+            if (p.Type != PacketType.dataUnreliable) //Unreliable packets are fire and forget
             {
-                //If the queue is empty return null
-                return null;
+                p.StripUnreliableMessages();
+                awaitingAckBuffer.AddPacket(p);
             }
         }
 
@@ -120,8 +173,6 @@ namespace UnityNetworkingLibrary
                 }
             }
         }
-
-
 
         //Checks message queue and adds as many messages to the new packet as can fit seperated by a delimiter
         //The new packet is sent to the packetQueue
@@ -189,9 +240,8 @@ namespace UnityNetworkingLibrary
             //Create packet from stream
             Packet p = new Packet(currentPacketID, latestPacketIdReceived, ackedBits, packetType, salt, messages, priority);
             QueuePacket(p);
-            if(p.Type != PacketType.dataUnreliable) //unreliable packets are shoved on a seperate queue when received rather than normal received buffer
+            if (p.Type != PacketType.dataUnreliable) //unreliable packets are shoved on a seperate queue when received rather than normal received buffer
                 currentPacketID += 1;
-
         }
 
         //
@@ -228,9 +278,16 @@ namespace UnityNetworkingLibrary
         //  if missing id's not received for ack encoding length (32 atm), (buffer any extra packets received in mean time).
         //  if large gap from latest id, buffer and request resend from last highest received (likely a burst of packet loss).
 
-
+        //---------------------RECEIVE METHODS-----------------------
 
         //Returns an enumeration indicating wether the new packet is old, new or invalid 
+
+        //Method called when data received from socket (I believe this uses the sockets thread)
+        void OnReceive(byte[] data, int bytesRead)
+        {
+
+        }
+
         PacketBuffer.IdBufferEntryState CheckReceivedPacketId(ushort idReceived)
         {
             //if more than the encoded bits are missed packet should be treated as missed and a resend from latest received should be requested.
@@ -256,6 +313,9 @@ namespace UnityNetworkingLibrary
             return state;
         }
 
+
+
+
         //Assumes id has been checked and updates ack info accordingly 
         void UpdateAckInfo(PacketBuffer.IdBufferEntryState state, ushort idReceived)
         {
@@ -273,7 +333,7 @@ namespace UnityNetworkingLibrary
                     //latest bit is at index 0 so left shift acks by diff and throw error if unacked packet found;
                     overflows = ackBitArray << idDiff;
                     //Check for unacknowledged packets
-                    foreach (var overflow in overflows) 
+                    foreach (var overflow in overflows)
                     {
                         if (!overflow)
                             throw new PacketNotAcknowledgedException();
