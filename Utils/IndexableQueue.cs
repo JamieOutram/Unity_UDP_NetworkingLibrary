@@ -41,6 +41,13 @@ namespace UnityNetworkingLibrary
             }
         }
 
+        public void Clear()
+        {
+            //Just resets index, data will be overwriten naturally
+            _length = 0;
+            _zeroPtr = 0;
+        }
+
         //Inserts value at index by shifting up other elements
         public void InsertAt(int index, T val)
         {

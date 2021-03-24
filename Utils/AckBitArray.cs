@@ -32,6 +32,11 @@ namespace UnityNetworkingLibrary.Utils
             return this.Equals(obj as AckBitArray);
         }
 
+        public void Clear()
+        {
+            Array.Clear(buffer, 0, buffer.Length);
+        }
+
         public override int GetHashCode()
         {
             unchecked

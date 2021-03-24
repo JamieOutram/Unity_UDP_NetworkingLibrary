@@ -29,6 +29,16 @@ namespace UnityNetworkingLibrary
             //_firstEmptyPtr = 0;
         }
 
+        public void Clear()
+        {
+            //Only clear id's, this way packets will overrite naturally
+            for (int i = 0; i < idBuffer.Length; i++)
+            {
+                idBuffer[i] = uint.MaxValue;
+            }
+            highestId = ushort.MaxValue; 
+        }
+
         public void AddPacket(Packet packet)
         {
             IdBufferEntryState state = GetIdBufferEntryState(packet.Id, highestId, (ushort)(packet.Id - buffer.Length), (ushort)(packet.Id + buffer.Length));
