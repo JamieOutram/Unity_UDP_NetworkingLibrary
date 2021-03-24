@@ -22,30 +22,9 @@ namespace UnityNetworkingLibrary
         public delegate void UdpOnReceived(byte[] data, int bytesRead);
         public event UdpOnReceived OnReceived;
 
-        object isReadyLock = new object();
-        public bool _isReady;
-        public bool IsReady //True when the socket is ready to send data
-        {
-            get
-            {
-                lock (isReadyLock)
-                {
-                    return _isReady;
-                }
-            }
-            private set
-            {
-                lock (isReadyLock)
-                {
-                    _isReady = value;
-                }
-            }
-        }
-
         public UDPSocket()
         {
             _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            IsReady = false;
         }
 
         public class State
@@ -60,13 +39,11 @@ namespace UnityNetworkingLibrary
             {
                 _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.ReuseAddress, true);
                 _socket.Bind(new IPEndPoint(IPAddress.Parse(address), port));
-                Receive();
-                IsReady = true;
+                StartReceiveThread();
                 return true;
             }
             catch (SocketException)
             {
-                IsReady = false;
                 return false;
             }
         }
@@ -76,51 +53,40 @@ namespace UnityNetworkingLibrary
             try
             {
                 _socket.Connect(IPAddress.Parse(address), port);
-                Receive();
-                IsReady = true;
+                StartReceiveThread();
                 return true;
             }
             catch (SocketException)
             {
-                IsReady = false;
                 return false;
             }
         }
 
         public void Send(string text)
         {
-            
-            IsReady = false;
             byte[] data = Encoding.ASCII.GetBytes(text);
             _socket.BeginSend(data, 0, data.Length, SocketFlags.None, (ar) =>
             {
                 State so = (State)ar.AsyncState;
                 int bytes = _socket.EndSend(ar);
-                IsReady = true;
                 Console.WriteLine("SEND: {0}, {1}", bytes, text);
             }, state);
         }
 
-        public void Send(byte[] data)
+        public IAsyncResult SendAsync(byte[] data)
         {
-            
             if (data.Length > bufSize)
                 throw new PacketSizeException();
 
-            if (IsReady == false)
-                throw new SocketNotReadyException();
-
-            IsReady = false;
-            _socket.BeginSend(data, 0, data.Length, SocketFlags.None, (ar) =>
+            return _socket.BeginSend(data, 0, data.Length, SocketFlags.None, (ar) =>
             {
                 State so = (State)ar.AsyncState;
                 int bytes = _socket.EndSend(ar);
-                IsReady = true;
             }, state);
         }
 
 
-        private void Receive()
+        private void StartReceiveThread() 
         {
             _socket.BeginReceiveFrom(state.buffer, 0, bufSize, SocketFlags.None, ref epFrom, recv = (ar) =>
             {
@@ -128,9 +94,15 @@ namespace UnityNetworkingLibrary
                 {
                     State so = (State)ar.AsyncState;
                     int bytes = _socket.EndReceiveFrom(ar, ref epFrom);
-                    _socket.BeginReceiveFrom(so.buffer, 0, bufSize, SocketFlags.None, ref epFrom, recv, so);
                     Console.WriteLine("RECV: {0}: {1}, {2}", epFrom.ToString(), bytes, Encoding.ASCII.GetString(so.buffer, 0, bytes));
-                    OnReceived?.Invoke(state.buffer, bytes); //This event call could possibly be optimised by letting delaying till after processing of sent data 
+                    //OnRecieved should be a short function copying buffer info to a larger packet buffer for another thread to deal with; (Induces some delay but more robust)
+                    OnReceived?.Invoke(so.buffer, bytes);
+
+                    //If messages arrive in quick succession, the new thread can edit the buffer before it has been copied so only begin recieving after onReceived event call;
+                    //This allows OnRecieved event to implement a limitation on how many packets are accepted per interval;
+                    //(avoids memory overflow or hundreds of threads during Dos attack at the price of dropping packets in high traffic situations)
+                    //This starts a new thread so should only be run after message info has been copied on
+                    _socket.BeginReceiveFrom(so.buffer, 0, bufSize, SocketFlags.None, ref epFrom, recv, so);
                 }
                 catch { }//TODO: This should only catch expected errors
             }, state);
