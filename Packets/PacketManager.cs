@@ -4,11 +4,14 @@ using System.Collections;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Diagnostics;
 namespace UnityNetworkingLibrary
 {
     using ExceptionExtensions;
     using Utils;
     using Messages;
+    using System.Threading.Tasks;
+
     //Mangages ordering and priority of packets to send
     //Options: unreliable, reliable and blocking data in packets
     //  unreliable packets are completely unreliable data, sent in one burst and forgotten
@@ -45,10 +48,11 @@ namespace UnityNetworkingLibrary
         object messageQueueLock = new object(); //Message queue can be changed at any time by public accessor, other queues only effected by manager thread
         object ackInfoLock = new object(); //ack info could be updated as it is being added to a packet for sending;
 
-
-        public Thread Thread { get; private set; }
+        //Main Manager thread
+        Thread thread;
 
         static RNGCryptoServiceProvider random = new RNGCryptoServiceProvider(); //Secure random function
+        ulong privateSalt;
         ulong salt;
 
         UDPSocket socket;
@@ -61,55 +65,91 @@ namespace UnityNetworkingLibrary
             awaitingAckBuffer = new PacketBuffer(_awaitingAckBufferSize);
             receiveBuffer = new PacketBuffer(_receiveBufferSize);
             socket = sock;
+            Initialize();
+        }
+
+        //Resets all manager properties to defaults
+        public void Clean()
+        {
+            ackedBits.Clear();
+            latestPacketIdReceived = 0;
+            currentPacketID = 0;
+            messageQueue.Clear();
+            packetQueue.Clear();
+            awaitingAckBuffer.Clear();
+            receiveBuffer.Clear();
+            privateSalt = GetNewSalt(); //Generate new private salt
         }
 
         //TODO: Packet Manager should be its own thread
         //Creates a new thread for the manager, returns refernce to the new thread.
-        Thread InitializeManager()
+        void Initialize()
         {
-            Thread = new Thread(new ParameterizedThreadStart(StartManagerAsync));
-            return Thread;
+            privateSalt = GetNewSalt();
+            socket.OnReceived += OnReceive;
+            thread = new Thread(new ThreadStart(ManagerLoop));
         }
 
         //Initializes and starts the manager on an asynchronous thread
-        void StartManagerAsync(object obj)
+        //Returns true if successful start, false on error
+        public void Start()
         {
-            socket.OnReceived += OnReceive;
+            //If the thread is already running do not start
+            if (thread.IsAlive)
+                throw new ThreadStateException();
+
+            Clean();
+            thread.Start();
         }
 
         //Manager performs a series of checks and performs certain actions each loop depending on the state of the various buffers
         void ManagerLoop()
         {
-            //Note: Could be multithreaded further but sticking with one manager thread for now
+            const int loopFrequency = 60; //loops a maximum of 60 times per second
+            long durationTicks = 1 / loopFrequency * Stopwatch.Frequency; //seconds * ticks/second 
 
-            //If the ack buffer is full do not send or add to the packet queue
-            lock (messageQueueLock)
+            while (true)
             {
-                //Fill the packet queue or empty message queue
-                while(!messageQueue.IsEmpty && !packetQueue.IsFull)
+                //Note: Could be multithreaded further but sticking with one manager thread for now
+                Stopwatch stopwatch = new Stopwatch();
+                stopwatch.Start();
+
+                PackageAndSendMessages();
+
+                //TODO: add exception handling and recovery for thread 
+
+                //loop repeats at a maximum of a given frequency (60 frames per second?)
+                if (durationTicks < stopwatch.ElapsedTicks)
+                {
+                    //Sleep till next loop rather than block to free up resources
+                    Thread.Sleep((int)Math.Ceiling((double)((durationTicks - stopwatch.ElapsedTicks) / (Stopwatch.Frequency * 1E3))));
+                }
+                stopwatch.Reset();
+            }
+        }
+
+        void PackageAndSendMessages()
+        {
+            //If the ack buffer is full do not send or add to the packet queue
+            //Fill the packet queue or empty message queue
+            while (!messageQueue.IsEmpty && !packetQueue.IsFull)
+            {
+                lock (messageQueueLock)
                 {
                     //create next packet from message queue
                     CreateNextPacketFromQueue();
                 }
+                //For efficiency asynchronusly send packets while adding to the packet queue
+                if (!packetQueue.IsEmpty)
+                    SendNextPacketAsync();
             }
-
-            //If there are packets waiting to be sent and the socket is ready to send
+            //If there are any more packets waiting to be sent after this process (packets added by ack logic)
             //Send all packets waiting to be sent
             while (!packetQueue.IsEmpty)
             {
-                if (socket.IsReady)
-                {
-                    SendNextPacket();
-                }
-                //TODO: Add delay so IsReady is yielded
+                SendNextPacketAsync();
             }
-
-            //TODO: add exception handling and recovery for thread 
-
-
-            //loop repeats at a given frequency (60 frames per second?)
         }
-
 
         public void QueueMessage(Message m)
         {
@@ -133,7 +173,7 @@ namespace UnityNetworkingLibrary
         }
 
         //Takes the next packet to be sent, attempts to send and moves to awaiting ack buffer if reliable
-        void SendNextPacket()
+        IAsyncResult SendNextPacketAsync()
         {
             //Get the packet to be sent
             Packet p = packetQueue.PopFront();
@@ -146,14 +186,16 @@ namespace UnityNetworkingLibrary
 
             //Serialize the packet and send
             byte[] data = p.Serialize();
-            socket.Send(data);
-
+            IAsyncResult task = socket.SendAsync(data);
+                
             //If reliable, add to the awating ack buffer
             if (p.Type != PacketType.dataUnreliable) //Unreliable packets are fire and forget
             {
                 p.StripUnreliableMessages();
                 awaitingAckBuffer.AddPacket(p);
             }
+
+            return task;
         }
 
         void QueuePacket(Packet p)
@@ -352,9 +394,9 @@ namespace UnityNetworkingLibrary
             ackedBits = ackBitArray;
         }
 
-        static byte[] GetNewSalt()
+        static ulong GetNewSalt()
         {
-            return GetNewSalt(Packet.saltLengthBits);
+            return BitConverter.ToUInt64(GetNewSalt(sizeof(ulong)),0);
         }
         static byte[] GetNewSalt(int maximumSaltLength)
         {
