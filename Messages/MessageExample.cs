@@ -21,7 +21,7 @@ namespace UnityNetworkingLibrary.Messages
 
         public MessageExample(int data, string variableData)
         {
-            if (variableData.Length > byte.MaxValue || variableData.Length < 0) //Limit string length
+            if (variableData.Length > 255 || variableData.Length < 0) //Limit string length
                 throw new ArgumentOutOfRangeException();
             this.StringData = variableData;
             this.IntData = data;

@@ -3,7 +3,7 @@ using System.Collections;
 using System.IO;
 using System.Collections.ObjectModel;
 using UnityNetworkingLibrary.ExceptionExtensions;
-namespace UnityNetworkingLibrary
+namespace UnityNetworkingLibrary.Packets
 {
     using Utils;
     using Messages;
@@ -237,17 +237,24 @@ namespace UnityNetworkingLibrary
             }
         }
 
-        /*Deserializes the header from the provided packet
+        //Deserializes only the header portion 
+        public static Header DeserializeHeaderOnly(byte[] packetData)
+        {
+            (Header h, _) = Deserialize(packetData, true); 
+            return (h);
+        }
+
+        /*Deserializes the header and data from the provided packet
         * Returns: Tuple (Header, data)
         */
-        public static (Header, Message[]) Deserialize(byte[] packetData)
+        public static (Header, Message[]) Deserialize(byte[] packetData, bool isHeaderOnly = false)
         {
             if (packetData.Length > PacketManager._maxPacketSizeBytes)
                 throw new PacketSizeException();
-
-            MemoryStream stream = new MemoryStream(packetData);
-            CustomBinaryReader reader = new CustomBinaryReader(stream);
             
+            MemoryStream stream = new MemoryStream(packetData, 0, isHeaderOnly ? headerSize : packetData.Length);
+            CustomBinaryReader reader = new CustomBinaryReader(stream);
+
             //Read checksum off front
             UInt32 checksum = reader.ReadUInt32();
             //Throw an error if Checksum does not match expected
@@ -255,17 +262,30 @@ namespace UnityNetworkingLibrary
                 throw new PacketChecksumException();
 
             //Read remaining data in order
+            
+            Header h = DeserializeHeader(reader);
+            Message[] m = isHeaderOnly ? null : DeserializeMessages(reader);
+
+            stream.Dispose();
+            reader.Dispose();
+
+            return (h, m);
+        }
+
+        static Message[] DeserializeMessages(CustomBinaryReader reader)
+        {
+            return Message.DeserializeStream(reader);
+        }
+
+        static Header DeserializeHeader(CustomBinaryReader reader)
+        {
             UInt16 id = reader.ReadUInt16();
             UInt16 ackId = reader.ReadUInt16();
             AckBitArray ackedBits = new AckBitArray(reader.ReadBytes(ackedBytesLength));
             PacketType type = (PacketType)reader.ReadByte();
             UInt64 salt = reader.ReadUInt64();
-            Message[] messages = Message.DeserializeStream(reader);
 
-            stream.Dispose();
-            reader.Dispose();
-
-            return (new Header(id, ackId, ackedBits, type, salt), messages);
+            return (new Header(id, ackId, ackedBits, type, salt));
         }
     }
 }

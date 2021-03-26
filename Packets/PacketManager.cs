@@ -10,6 +10,7 @@ namespace UnityNetworkingLibrary
     using ExceptionExtensions;
     using Utils;
     using Messages;
+    using Packets;
     using System.Threading.Tasks;
 
     //Mangages ordering and priority of packets to send
@@ -40,16 +41,18 @@ namespace UnityNetworkingLibrary
         UInt16 currentPacketID = 0; //value incremented and assigned to each packet in the send queue
         IndexableQueue<Message> messageQueue; //Messages to be sent are added to this queue acording to priority.
         IndexableQueue<Packet> packetQueue; //prepared packets waiting to be sent, fairly short queue which allows pushing of unacknowledged packets to front 
-        PacketBuffer awaitingAckBuffer; //buffer storing reliable messages awaiting acknowledgement.
-        PacketBuffer receiveBuffer; //When reliable packet id skipped, any more received packets are added to this buffer while waiting for resend.
-
+        IdBuffer<Packet> awaitingAckBuffer; //buffer storing reliable messages awaiting acknowledgement.
+        IdBuffer<byte[]> receiveBuffer; //When reliable packet id skipped, any more received packets are added to this buffer while waiting for resend.
+        bool isConnected = false;
 
         //Thread Locks
         object messageQueueLock = new object(); //Message queue can be changed at any time by public accessor, other queues only effected by manager thread
         object ackInfoLock = new object(); //ack info could be updated as it is being added to a packet for sending;
+        object receiveBufferLock = new object(); //Messages received could be added at the same time as the manager attempts to process them;
 
         //Main Manager thread
         Thread thread;
+        Thread decodeThread;
 
         static RNGCryptoServiceProvider random = new RNGCryptoServiceProvider(); //Secure random function
         ulong privateSalt;
@@ -62,8 +65,8 @@ namespace UnityNetworkingLibrary
             //define arrays
             messageQueue = new IndexableQueue<Message>(_messageQueueSize);
             packetQueue = new IndexableQueue<Packet>(_packetQueueSize);
-            awaitingAckBuffer = new PacketBuffer(_awaitingAckBufferSize);
-            receiveBuffer = new PacketBuffer(_receiveBufferSize);
+            awaitingAckBuffer = new IdBuffer<Packet>(_awaitingAckBufferSize);
+            receiveBuffer = new IdBuffer<byte[]>(_receiveBufferSize);
             socket = sock;
             Initialize();
         }
@@ -90,8 +93,7 @@ namespace UnityNetworkingLibrary
             thread = new Thread(new ThreadStart(ManagerLoop));
         }
 
-        //Initializes and starts the manager on an asynchronous thread
-        //Returns true if successful start, false on error
+        //Cleans and starts the manager on an asynchronous thread
         public void Start()
         {
             //If the thread is already running do not start
@@ -102,29 +104,47 @@ namespace UnityNetworkingLibrary
             thread.Start();
         }
 
+        //Stops and joins the manager thread
+        public void Stop()
+        {
+            //If the thread is not running, throw exception
+            if (!thread.IsAlive)
+                throw new ThreadStateException();
+
+            thread.Abort();
+            thread.Join(); //Not strictly necessary but good for debugging as ensures the thread is actually closed;
+        }
+
         //Manager performs a series of checks and performs certain actions each loop depending on the state of the various buffers
         void ManagerLoop()
         {
             const int loopFrequency = 60; //loops a maximum of 60 times per second
             long durationTicks = 1 / loopFrequency * Stopwatch.Frequency; //seconds * ticks/second 
-
-            while (true)
+            try
             {
-                //Note: Could be multithreaded further but sticking with one manager thread for now
-                Stopwatch stopwatch = new Stopwatch();
-                stopwatch.Start();
-
-                PackageAndSendMessages();
-
-                //TODO: add exception handling and recovery for thread 
-
-                //loop repeats at a maximum of a given frequency (60 frames per second?)
-                if (durationTicks < stopwatch.ElapsedTicks)
+                while (true)
                 {
-                    //Sleep till next loop rather than block to free up resources
-                    Thread.Sleep((int)Math.Ceiling((double)((durationTicks - stopwatch.ElapsedTicks) / (Stopwatch.Frequency * 1E3))));
+                    //Note: Could be multithreaded further but sticking with one manager thread for now
+                    Stopwatch stopwatch = new Stopwatch();
+                    stopwatch.Start();
+
+                    PackageAndSendMessages();
+
+                    //TODO: add exception handling and recovery for thread 
+
+                    //loop repeats at a maximum of a given frequency (60 frames per second?)
+                    if (durationTicks < stopwatch.ElapsedTicks)
+                    {
+                        //Sleep till next loop rather than block to free up resources
+                        Thread.Sleep((int)Math.Ceiling((double)((durationTicks - stopwatch.ElapsedTicks) / (Stopwatch.Frequency * 1E3))));
+                    }
+                    stopwatch.Reset();
                 }
-                stopwatch.Reset();
+            }
+            catch (ThreadAbortException)
+            {
+                //TODO: Release resources
+                return;
             }
         }
 
@@ -192,7 +212,7 @@ namespace UnityNetworkingLibrary
             if (p.Type != PacketType.dataUnreliable) //Unreliable packets are fire and forget
             {
                 p.StripUnreliableMessages();
-                awaitingAckBuffer.AddPacket(p);
+                awaitingAckBuffer.Add(p.Id, p);
             }
 
             return task;
@@ -324,13 +344,49 @@ namespace UnityNetworkingLibrary
 
         //Returns an enumeration indicating wether the new packet is old, new or invalid 
 
-        //Method called when data received from socket (I believe this uses the sockets thread)
+        //Method called when data received from socket (I believe this uses the socket's thread)
         void OnReceive(byte[] data, int bytesRead)
         {
+            Packet.Header header;
+            try
+            {
+                header = Packet.DeserializeHeaderOnly(data);
+            }
+            catch (PacketChecksumException)
+            {
+                return;//Ignore any packets with invalid checksum
+            }
+            
+            //Basic checks to discard any simple spoofed packets
+            if(header.packetType == PacketType.ClientConnectionRequest)
+            {
+                //If client is already connected, ignore packet and do not buffer
+                if (isConnected) return;
 
+                //TODO: If a client receives this message type, ignore
+            }
+            else if(header.packetType == PacketType.ServerChallengeRequest)
+            {
+                //if the client has already established connection, ignore
+                if (isConnected) return;
+
+                //TODO: If the server recieves this ingnore
+            }
+            //Check salt if not a connection request
+            else if(header.salt != salt)
+            {
+                //Ignore packet if salt does not match (Note: could be made a rolling salt by sending random seed rather than xor?, getting into encryption territory here.)
+                return;
+            }
+
+            //Once passed basic tests, Store in buffer for manager to handle when ready 
+            lock (receiveBufferLock)
+            {
+                receiveBuffer.Add(header.id, data);
+            }
         }
 
-        PacketBuffer.IdBufferEntryState CheckReceivedPacketId(ushort idReceived)
+        IdBuffer.InputIdState CheckReceivedPacketId(ushort idReceived)
         {
             //if more than the encoded bits are missed packet should be treated as missed and a resend from latest received should be requested.
             const UInt16 maxMissedPackets = Packet.ackedBitsLength;
@@ -351,7 +407,7 @@ namespace UnityNetworkingLibrary
             ushort oldAndAcceptableLimit = (ushort)(latestPacketIdReceived - maxMissedPackets);
 
             //3 ouput cases: invalid, old message, new message
-            PacketBuffer.IdBufferEntryState state = PacketBuffer.GetIdBufferEntryState(idReceived, latestPacketIdReceived, oldAndAcceptableLimit, newAndAcceptableLimit);
+            IdBuffer.InputIdState state = IdBuffer.GetIdBufferEntryState(idReceived, latestPacketIdReceived, oldAndAcceptableLimit, newAndAcceptableLimit);
             return state;
         }
 
@@ -359,9 +415,9 @@ namespace UnityNetworkingLibrary
 
 
         //Assumes id has been checked and updates ack info accordingly 
-        void UpdateAckInfo(PacketBuffer.IdBufferEntryState state, ushort idReceived)
+        void UpdateAckInfo(IdBuffer.InputIdState state, ushort idReceived)
         {
-            if (state == PacketBuffer.IdBufferEntryState.Invalid)
+            if (state == IdBuffer.InputIdState.Invalid)
                 return; //no update for invalid packet
 
             //Calculate acked bit array
@@ -370,7 +426,7 @@ namespace UnityNetworkingLibrary
             int idDiff;
             switch (state)
             {
-                case PacketBuffer.IdBufferEntryState.New:
+                case IdBuffer.InputIdState.New:
                     idDiff = (idReceived - latestPacketIdReceived) % Packet.ackedBitsLength;//Should handle overflow cases
                     //latest bit is at index 0 so left shift acks by diff and throw error if unacked packet found;
                     overflows = ackBitArray << idDiff;
@@ -383,7 +439,7 @@ namespace UnityNetworkingLibrary
                     ackBitArray[0] = true;
                     latestPacketIdReceived = idReceived;
                     break;
-                case PacketBuffer.IdBufferEntryState.Old:
+                case IdBuffer.InputIdState.Old:
                     //Set acknowledgment bit for id position to true;
                     idDiff = (latestPacketIdReceived - idReceived) % Packet.ackedBitsLength;
                     ackBitArray[idDiff] = true;
