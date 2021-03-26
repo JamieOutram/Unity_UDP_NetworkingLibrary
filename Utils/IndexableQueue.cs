@@ -48,8 +48,17 @@ namespace UnityNetworkingLibrary
             _zeroPtr = 0;
         }
 
+        public void Add(T item)
+        {
+            if (_length == _size)
+                throw new QueueFullException();
+
+            _queue[AdjustIndex(_length)] = item;
+            _length++;
+        }
+
         //Inserts value at index by shifting up other elements
-        public void InsertAt(int index, T val)
+        public void InsertAt(int index, T item)
         {
             if (_length == _size)
                 throw new QueueFullException();
@@ -74,7 +83,7 @@ namespace UnityNetworkingLibrary
                 }
 
             }
-            _queue[AdjustIndex(index)] = val;
+            _queue[AdjustIndex(index)] = item;
             _length++;
         }
 

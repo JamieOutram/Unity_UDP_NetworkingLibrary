@@ -26,9 +26,9 @@ namespace UnityNetworkingLibrary
         public const int _maxPacketDataBytes = _maxPacketSizeBytes - Packet.headerSize;
         public const int _messageQueueSize = 200;
         public const int _packetQueueSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
-        public const int _awaitingAckBufferSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
-        public const int _receiveBufferSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
-
+        public const int _awaitingAckBufferSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks & disconnect/resync
+        public const int _receiveBufferSize = Packet.ackedBitsLength; //Number of reliable packets buffered before dropping
+        public const int _receiveQueueSize = Packet.ackedBitsLength; //Number of unreliable packets buffered before dropping
 
         //Define constants 
         //TODO: burst length and interval/timeout could be made dynamic based on connection or completely user defined
@@ -36,22 +36,29 @@ namespace UnityNetworkingLibrary
         const int _reliableBurstLength = 3; // " for reliable data
         const int _reliableTriggerBurstLength = 10; // " for reliable trigger data
         TimeSpan _reliableInterval = TimeSpan.FromMilliseconds(100); //timeout after reliable burst before assuming not received in ms NOTE: should be rarely triggered thanks to ackedbits
-        AckBitArray ackedBits = new AckBitArray(Packet.ackedBitsLength); //Acknowledgement bits for the last ackedBitsLength received packet ids
-        UInt16 latestPacketIdReceived = 0; //value set to id of latest receieved packet
+        AckBitArray ackedBits; //Acknowledgement bits for the last ackedBitsLength received packet ids
+
         UInt16 currentPacketID = 0; //value incremented and assigned to each packet in the send queue
+
+        //------Send buffers--------
         IndexableQueue<Message> messageQueue; //Messages to be sent are added to this queue acording to priority.
         IndexableQueue<Packet> packetQueue; //prepared packets waiting to be sent, fairly short queue which allows pushing of unacknowledged packets to front 
-        IdBuffer<Packet> awaitingAckBuffer; //buffer storing reliable messages awaiting acknowledgement.
-        IdBuffer<byte[]> receiveBuffer; //When reliable packet id skipped, any more received packets are added to this buffer while waiting for resend.
+        IdBuffer<Packet> awaitingAckBuffer; //buffer storing sent reliable messages awaiting acknowledgement.
+        //------Receive buffers--------
+        IdBuffer<(Packet.Header, byte[])> receiveBuffer; //Received reliable packets are stored and ordered in this buffer
+        IndexableQueue<(Packet.Header, byte[])> receiveQueue; //Received unreliable packets are stored here for processing
+        IdBuffer<bool> receiveBufferAcks; //Acknowledgment state mask for receiveBuffer
         bool isConnected = false;
 
         //Thread Locks
         object messageQueueLock = new object(); //Message queue can be changed at any time by public accessor, other queues only effected by manager thread
         object ackInfoLock = new object(); //ack info could be updated as it is being added to a packet for sending;
         object receiveBufferLock = new object(); //Messages received could be added at the same time as the manager attempts to process them;
+        object receiveQueueLock = new object();
 
         //Main Manager thread
         Thread thread;
+        //Packet Decoding thread
         Thread decodeThread;
 
         static RNGCryptoServiceProvider random = new RNGCryptoServiceProvider(); //Secure random function
@@ -63,10 +70,13 @@ namespace UnityNetworkingLibrary
         PacketManager(UDPSocket sock)
         {
             //define arrays
+            ackedBits = new AckBitArray(Packet.ackedBitsLength);
             messageQueue = new IndexableQueue<Message>(_messageQueueSize);
             packetQueue = new IndexableQueue<Packet>(_packetQueueSize);
             awaitingAckBuffer = new IdBuffer<Packet>(_awaitingAckBufferSize);
-            receiveBuffer = new IdBuffer<byte[]>(_receiveBufferSize);
+            receiveBuffer = new IdBuffer<(Packet.Header, byte[])>(_receiveBufferSize);
+            receiveQueue = new IndexableQueue<(Packet.Header, byte[])>(_receiveQueueSize);
+            receiveBufferAcks = new IdBuffer<bool>(_receiveBufferSize);
             socket = sock;
             Initialize();
         }
@@ -207,7 +217,7 @@ namespace UnityNetworkingLibrary
             //Serialize the packet and send
             byte[] data = p.Serialize();
             IAsyncResult task = socket.SendAsync(data);
-                
+
             //If reliable, add to the awating ack buffer
             if (p.Type != PacketType.dataUnreliable) //Unreliable packets are fire and forget
             {
@@ -341,8 +351,8 @@ namespace UnityNetworkingLibrary
         //  if large gap from latest id, buffer and request resend from last highest received (likely a burst of packet loss).
 
         //---------------------RECEIVE METHODS-----------------------
-
-        //Returns an enumeration indicating wether the new packet is old, new or invalid 
+        ushort latestPacketIdReceived = ushort.MaxValue; //value set to id of latest received packet
+        ushort lastPacketIdDecoded = ushort.MaxValue; //indicates the id of the last packet taken off the receive buffer 
 
         //Method called when data received from socket (I believe this uses the socket's thread)
         void OnReceive(byte[] data, int bytesRead)
@@ -356,16 +366,16 @@ namespace UnityNetworkingLibrary
             {
                 return;//Ignore any packets with invalid checksum
             }
-            
+
             //Basic checks to discard any simple spoofed packets
-            if(header.packetType == PacketType.ClientConnectionRequest)
+            if (header.packetType == PacketType.ClientConnectionRequest)
             {
                 //If client is already connected, ignore packet and do not buffer
                 if (isConnected) return;
 
                 //TODO: If a client receives this message type, ignore
             }
-            else if(header.packetType == PacketType.ServerChallengeRequest)
+            else if (header.packetType == PacketType.ServerChallengeRequest)
             {
                 //if the client has already established connection, ignore
                 if (isConnected) return;
@@ -373,16 +383,80 @@ namespace UnityNetworkingLibrary
                 //TODO: If the server recieves this ingnore
             }
             //Check salt if not a connection request
-            else if(header.salt != salt)
+            else if (header.salt != salt)
             {
                 //Ignore packet if salt does not match (Note: could be made a rolling salt by sending random seed rather than xor?, getting into encryption territory here.)
                 return;
             }
 
             //Once passed basic tests, Store in buffer for manager to handle when ready 
+            if (header.packetType == PacketType.dataUnreliable)
+            {
+                if (IsIdLaterThanLastDecoded(header.id)) //Ensures the recieved unreliable packet is not very old or very new
+                {
+                    //Unreliable packets do not need to be ordered so store in queue
+                    if (!packetQueue.IsFull)
+                    {
+                        lock (receiveQueueLock)
+                        {
+                            receiveQueue.Add((header, data));
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (IsIdLaterThanLastDecoded(header.id))
+                {
+                    //Reliable messages have an order achieved by indexing recieveBuffer by packet id    
+                    lock (receiveBufferLock)
+                    {
+                        receiveBuffer.Add(header.id, (header, data));
+                    }
+                }
+                //discard otherwise (most likely duplicate)
+            }
+
+        }
+
+
+        //Decodes all buffered reliable and unreliable messages, requests resend of missing reliable packets 
+        void ReceiveAll()
+        {
+            //Decode valid in receiveBuffer first (gives reliable packets slightly higher priority)
             lock (receiveBufferLock)
             {
-                receiveBuffer.Add(header.id, data);
+                //loop through headers from last decoded packet to latest received packet
+                    //apply to ack mask (build picture of missing packets)
+                    //need a quick way to generate ack info from mask and apply ack info to mask...
+                    //maybe ackbitarray of length buffer.length, no way to quickly assign chunk XOR? still loop through all
+
+
+                    //if gap found, decode up to gap and set  
+            }
+            //Request resend on missing packets from acked bits
+
+
+            //Decode all of receiveQueue
+            while ()
+        }
+
+        bool IsIdLaterThanLastDecoded(ushort id)
+        {
+            //Acceptable range is from last decoded exclusive to last decoded wrapped once inclusive
+            //receiveBuffer.length << ushort.MaxValue
+            ushort LB = (ushort)(lastPacketIdDecoded + 1);
+            ushort UB = (ushort)(lastPacketIdDecoded + receiveBuffer.Length);
+
+            if (LB < UB) //No overflow
+            {
+                if (LB <= id && id <= UB) return true;
+                else return false;
+            }
+            else //(UB < LB) UB overflows
+            {
+                if (LB <= id || id <= UB) return true;
+                else return false;
             }
         }
 
@@ -391,9 +465,9 @@ namespace UnityNetworkingLibrary
             //if more than the encoded bits are missed packet should be treated as missed and a resend from latest received should be requested.
             const UInt16 maxMissedPackets = Packet.ackedBitsLength;
 
-            //Get index of first 0 in bit array
-            int i = 0;
-            for (i = 0; i < Packet.ackedBitsLength; i++)
+            //Get index of first 0 in acknowledgment bit array
+            int i;
+            for (i = Packet.ackedBitsLength - 1; i >= 0; i--)
             {
                 //Check for first unacked message
                 if (!ackedBits[i])
@@ -452,7 +526,7 @@ namespace UnityNetworkingLibrary
 
         static ulong GetNewSalt()
         {
-            return BitConverter.ToUInt64(GetNewSalt(sizeof(ulong)),0);
+            return BitConverter.ToUInt64(GetNewSalt(sizeof(ulong)), 0);
         }
         static byte[] GetNewSalt(int maximumSaltLength)
         {
