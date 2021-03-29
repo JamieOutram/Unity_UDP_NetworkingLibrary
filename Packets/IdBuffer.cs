@@ -116,6 +116,11 @@ namespace UnityNetworkingLibrary.Packets
             highestId = ushort.MaxValue; 
         }
 
+        public bool IsIdBuffered(ushort id)
+        {
+            return idBuffer[GetIndex(id)] == id; 
+        }
+
         public void Add(ushort id, T item)
         {
             InputIdState state = GetIdBufferEntryState(id, highestId, (ushort)(id - buffer.Length), (ushort)(id + buffer.Length));

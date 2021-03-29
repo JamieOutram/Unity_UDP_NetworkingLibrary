@@ -2,8 +2,10 @@
 
 namespace UnityNetworkingLibrary.Utils
 {
+    using Packets;
     public class AckBitArray
     {
+        const int chunkSize = sizeof(byte) * 8;
         byte[] buffer;
 
         public int Length
@@ -163,5 +165,55 @@ namespace UnityNetworkingLibrary.Utils
             }
             return overflow;
         }
+
+        //Performs bitwise Or from a into this.buffer starting at the given bit offset (allows index overflow to 0)
+        public void AddEncodedAck(AckBitArray a, int offset)
+        {
+            //a encodes a.length previous acks
+            //makes sense for processing this that msb is oldest and lsb is newest
+
+            int offBytes = offset / chunkSize; 
+            int offBits = offset % chunkSize; 
+
+            //first mask byte has no overflowing bits
+            buffer[offBytes] |= (byte)(a.buffer[0] << offBits); 
+
+            int i = offBytes + 1;
+            int j = 1;
+            while (j < a.buffer.Length)
+            {
+                //generate mask byte to apply to this.buffer
+                buffer[i % buffer.Length] |= (byte)((a.buffer[j] << offBits) | (a.buffer[j - 1] >> (chunkSize - offBits))); 
+                i++;
+                j++;
+            }
+            //Last mask is only overflowing bits
+            buffer[i % buffer.Length] |= (byte)(a.buffer[j - 1] >> (chunkSize - offBits)); //reference could wrap back to 0 due to mod
+        }
+
+        public AckBitArray GetEncodedAck(int offset, int byteCount)
+        {
+            int offBytes = offset / chunkSize; 
+            int offBits = offset % chunkSize; 
+
+            AckBitArray output = new AckBitArray(byteCount);
+
+            int j = offBytes;
+            int i = 0;
+            while(i < byteCount)
+            {
+                output.buffer[i] = (byte)((buffer[j] >> offBits) | (buffer[j + 1] << (chunkSize - offBits)));
+                i++;
+                j++;
+            }
+            return output;
+
+        }
+
+        public void ClearBit(int index)
+        {
+            buffer[index/8] = SetBit(buffer[index/8], false, index%8);
+        }
+
     }
 }

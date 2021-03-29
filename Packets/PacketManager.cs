@@ -27,7 +27,7 @@ namespace UnityNetworkingLibrary
         public const int _messageQueueSize = 200;
         public const int _packetQueueSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks
         public const int _awaitingAckBufferSize = Packet.ackedBitsLength; //At Least long enough to accomodate all encoded acks & disconnect/resync
-        public const int _receiveBufferSize = Packet.ackedBitsLength; //Number of reliable packets buffered before dropping
+        public const int _receiveBufferSize = Packet.ackedBitsLength; //Number of reliable packets buffered before dropping. Should be a factor of 2^16 (ushort) due to % overflow referencing. 
         public const int _receiveQueueSize = Packet.ackedBitsLength; //Number of unreliable packets buffered before dropping
 
         //Define constants 
@@ -47,7 +47,7 @@ namespace UnityNetworkingLibrary
         //------Receive buffers--------
         IdBuffer<(Packet.Header, byte[])> receiveBuffer; //Received reliable packets are stored and ordered in this buffer
         IndexableQueue<(Packet.Header, byte[])> receiveQueue; //Received unreliable packets are stored here for processing
-        IdBuffer<bool> receiveBufferAcks; //Acknowledgment state mask for receiveBuffer
+        AckBitArray receiveBufferAcks; //Acknowledgment state mask for receiveBuffer
         bool isConnected = false;
 
         //Thread Locks
@@ -76,7 +76,7 @@ namespace UnityNetworkingLibrary
             awaitingAckBuffer = new IdBuffer<Packet>(_awaitingAckBufferSize);
             receiveBuffer = new IdBuffer<(Packet.Header, byte[])>(_receiveBufferSize);
             receiveQueue = new IndexableQueue<(Packet.Header, byte[])>(_receiveQueueSize);
-            receiveBufferAcks = new IdBuffer<bool>(_receiveBufferSize);
+            receiveBufferAcks = new AckBitArray(_receiveBufferSize);
             socket = sock;
             Initialize();
         }
@@ -423,22 +423,63 @@ namespace UnityNetworkingLibrary
         //Decodes all buffered reliable and unreliable messages, requests resend of missing reliable packets 
         void ReceiveAll()
         {
+            //Note: current method could lead to longer than necessary lag times when a packet is missed/
+            //as it waits to deserialize rather than deserializing and buffering
+            
+            Message[][] allOrderedDecodedMessages = new Message[_receiveBufferSize + _receiveQueueSize][];
+            int j = 0;
             //Decode valid in receiveBuffer first (gives reliable packets slightly higher priority)
             lock (receiveBufferLock)
             {
-                //loop through headers from last decoded packet to latest received packet
-                    //apply to ack mask (build picture of missing packets)
-                    //need a quick way to generate ack info from mask and apply ack info to mask...
-                    //maybe ackbitarray of length buffer.length, no way to quickly assign chunk XOR? still loop through all
-
-
-                    //if gap found, decode up to gap and set  
+                //Check if a new reliable message has been received
+                if(lastPacketIdDecoded != latestPacketIdReceived)
+                {
+                    bool keepDecoding = true;
+                    //loop through headers from last decoded packet to latest received packet
+                    for (ushort i = (ushort)(lastPacketIdDecoded + 1); i != latestPacketIdReceived; i++)
+                    {
+                        if (receiveBuffer.IsIdBuffered(i)) 
+                        { 
+                            (Packet.Header h, byte[] data) = receiveBuffer.Get(i); //Read the packet info
+                            
+                            //apply to ack mask (build picture of which reliable messages sent have been received)
+                            receiveBufferAcks.AddEncodedAck(h.ackedBits, h.ackId % receiveBuffer.Length);
+                            
+                            if (keepDecoding)
+                            {
+                                (_, allOrderedDecodedMessages[j]) = Packet.Deserialize(data);
+                                j++;
+                            }
+                        }
+                        else
+                        {
+                            keepDecoding = false;
+                        }
+                    }
+                }
             }
-            //Request resend on missing packets from acked bits
+
+            //TODO: Request resend on missing packets from acked bits
+
+            //Decode all unreliable messages in receiveQueue
+            lock (receiveQueueLock)
+            {
+                while (!receiveQueue.IsEmpty)
+                {
+                    (Packet.Header h, byte[] data) = receiveQueue.PopFront();
+
+                    //apply to ack mask (build picture of which reliable messages sent have been received)
+                    receiveBufferAcks.AddEncodedAck(h.ackedBits, h.ackId % receiveBuffer.Length);
+
+                    (_, allOrderedDecodedMessages[j]) = Packet.Deserialize(data);
+                    j++;
+                }
+            }
+
+            
+            //Resend old unacknowledged messages
 
 
-            //Decode all of receiveQueue
-            while ()
         }
 
         bool IsIdLaterThanLastDecoded(ushort id)
