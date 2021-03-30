@@ -35,6 +35,14 @@ namespace UnityNetworkingLibrary
         }
 
         [Serializable]
+        public class PacketEncodedAckException : Exception
+        {
+            public PacketEncodedAckException() { }
+
+        }
+        
+
+        [Serializable]
         //Packet Id could not be found
         public class PacketNotFoundException : Exception
         {
