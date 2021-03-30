@@ -86,9 +86,9 @@ namespace UnityNetworkingLibrary.Packets
     class IdBuffer<T> : IdBuffer
     {
         uint[] idBuffer;
-        T[] buffer;
+        protected T[] buffer;
         ushort highestId;
-        //int _firstEmptyPtr;
+
         public int Length
         {
             get { return buffer.Length; }
@@ -98,20 +98,15 @@ namespace UnityNetworkingLibrary.Packets
         {
             buffer = new T[size];
             idBuffer = new uint[size];
-            for(int i = 0; i<size; i++)
-            {
-                idBuffer[i] = uint.MaxValue;
-            }
-            highestId = ushort.MaxValue;
-            //_firstEmptyPtr = 0;
+            Clear();
         }
 
         public void Clear()
         {
             //Only clear id's, this way packets will overrite naturally
-            for (int i = 0; i < idBuffer.Length; i++)
+            for (ushort i = 0; i < idBuffer.Length; i++)
             {
-                idBuffer[i] = uint.MaxValue;
+                Remove(i);
             }
             highestId = ushort.MaxValue; 
         }
@@ -123,7 +118,7 @@ namespace UnityNetworkingLibrary.Packets
 
         public void Add(ushort id, T item)
         {
-            InputIdState state = GetIdBufferEntryState(id, highestId, (ushort)(id - buffer.Length), (ushort)(id + buffer.Length));
+            InputIdState state = GetIdBufferEntryState(id, highestId, (ushort)(highestId - buffer.Length), (ushort)(highestId + buffer.Length));
             if (state == InputIdState.Invalid)
                 throw new PacketIdTooOldOrNewException(); //Dont change buffer if adding an invalid packet is attempted
 
@@ -135,7 +130,7 @@ namespace UnityNetworkingLibrary.Packets
                 i += 1;
                 while (i != id) //due to overflow could be above or below
                 {
-                    idBuffer[GetIndex(i)] = uint.MaxValue;
+                    Remove(i);
                     i += 1;
                 }
                 highestId = id;
@@ -147,12 +142,16 @@ namespace UnityNetworkingLibrary.Packets
             idBuffer[index] = id;
         }
 
+        public void Remove(ushort id)
+        {
+            idBuffer[GetIndex(id)] = uint.MaxValue;
+        }
+
         public T Get(ushort id)
         {
-            int index = GetIndex(id);
-            if (idBuffer[index] == id)
+            if (IsIdBuffered(id))
             {
-                return buffer[index];
+                return buffer[GetIndex(id)];
             }
             else
             {
@@ -164,6 +163,5 @@ namespace UnityNetworkingLibrary.Packets
         {
             return id % buffer.Length;
         }
-        
     }
 }

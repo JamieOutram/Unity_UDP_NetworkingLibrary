@@ -5,12 +5,17 @@ namespace UnityNetworkingLibrary.Utils
     using Packets;
     public class AckBitArray
     {
-        const int chunkSize = sizeof(byte) * 8;
-        byte[] buffer;
+        
+        protected byte[] buffer;
 
-        public int Length
+        public int LengthBits
         {
             get { return buffer.Length*8; }
+        }
+
+        public int LengthBytes
+        {
+            get { return buffer.Length; }
         }
 
         public AckBitArray(int sizeBytes, ulong initialValue = 0L)
@@ -63,7 +68,7 @@ namespace UnityNetworkingLibrary.Utils
             return (byte[])buffer.Clone();
         }
 
-        public bool this[int i]
+        public virtual bool this[int i]
         {
             get {
                 int index = i / 8; //should floor
@@ -87,9 +92,9 @@ namespace UnityNetworkingLibrary.Utils
         }
         public static bool operator == (AckBitArray a, AckBitArray b)
         {
-            if (a.Length != b.Length)
+            if (a.LengthBits != b.LengthBits)
                 return false;
-            for(int i = 0; i < a.Length; i++)
+            for(int i = 0; i < a.LengthBits; i++)
             {
                 if (a[i] != b[i])
                     return false;
@@ -98,7 +103,7 @@ namespace UnityNetworkingLibrary.Utils
         }
         public static bool operator ==(AckBitArray a, long b)
         {
-            if (a.Length > sizeof(long)*8)
+            if (a.LengthBits > sizeof(long)*8)
                 return false;
             return a.ToLong() == b;
         }
@@ -118,15 +123,21 @@ namespace UnityNetworkingLibrary.Utils
             return BitConverter.ToInt64(convert, 0);
         }
 
-        bool GetBit(byte b, int bitNumber)
+        protected bool GetBit(byte b, int bitNumber)
         {
             return (b & (1 << bitNumber)) != 0;
         }
-        byte SetBit(byte b, bool setTo, int bitIndex)
+        protected byte SetBit(byte b, bool setTo, int bitIndex)
         {
             byte mask = (byte)(1 << bitIndex);
             return (byte)(setTo ? b | mask : b & ~mask);
         }
+
+        public byte GetByte(int index)
+        {
+            return buffer[index];
+        }
+
 
         /// <summary>
         /// Shifts the bits in an array of bytes to the left.
@@ -135,10 +146,10 @@ namespace UnityNetworkingLibrary.Utils
         public static bool[] ShiftLeft(AckBitArray a, int count)
         {
             bool[] overflow = new bool[count];
-            for (int i = a.Length-1; i >= 0; i--)
+            for (int i = a.LengthBits-1; i >= 0; i--)
             {
-                if (i >= a.Length-count)
-                    overflow[i-(a.Length-count)] = a[i]; //buffer overflowed bits
+                if (i >= a.LengthBits-count)
+                    overflow[i-(a.LengthBits-count)] = a[i]; //buffer overflowed bits
                 if (i >= count)
                     a[i] = a[i - count];
                 else
@@ -154,65 +165,16 @@ namespace UnityNetworkingLibrary.Utils
         public static bool[] ShiftRight(AckBitArray a, int count)
         {
             bool[] overflow = new bool[count];
-            for(int i = 0; i < a.Length; i++)
+            for(int i = 0; i < a.LengthBits; i++)
             {
                 if (i < count)
                     overflow[i] = a[i]; //buffer overflowed bits
-                if (i < a.Length - count)
+                if (i < a.LengthBits - count)
                     a[i] = a[i + count];
                 else
                     a[i] = false; //append 0's
             }
             return overflow;
-        }
-
-        //Performs bitwise Or from a into this.buffer starting at the given bit offset (allows index overflow to 0)
-        public void AddEncodedAck(AckBitArray a, int offset)
-        {
-            //a encodes a.length previous acks
-            //makes sense for processing this that msb is oldest and lsb is newest
-
-            int offBytes = offset / chunkSize; 
-            int offBits = offset % chunkSize; 
-
-            //first mask byte has no overflowing bits
-            buffer[offBytes] |= (byte)(a.buffer[0] << offBits); 
-
-            int i = offBytes + 1;
-            int j = 1;
-            while (j < a.buffer.Length)
-            {
-                //generate mask byte to apply to this.buffer
-                buffer[i % buffer.Length] |= (byte)((a.buffer[j] << offBits) | (a.buffer[j - 1] >> (chunkSize - offBits))); 
-                i++;
-                j++;
-            }
-            //Last mask is only overflowing bits
-            buffer[i % buffer.Length] |= (byte)(a.buffer[j - 1] >> (chunkSize - offBits)); //reference could wrap back to 0 due to mod
-        }
-
-        public AckBitArray GetEncodedAck(int offset, int byteCount)
-        {
-            int offBytes = offset / chunkSize; 
-            int offBits = offset % chunkSize; 
-
-            AckBitArray output = new AckBitArray(byteCount);
-
-            int j = offBytes;
-            int i = 0;
-            while(i < byteCount)
-            {
-                output.buffer[i] = (byte)((buffer[j] >> offBits) | (buffer[j + 1] << (chunkSize - offBits)));
-                i++;
-                j++;
-            }
-            return output;
-
-        }
-
-        public void ClearBit(int index)
-        {
-            buffer[index/8] = SetBit(buffer[index/8], false, index%8);
         }
 
     }
